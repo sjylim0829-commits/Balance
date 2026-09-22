@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>진행자 콘솔 | 밸런스 게임 Host Console</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase App & Cloud Firestore SDK (Compat CDN for zero-build web compatibility) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="p-4 sm:p-6 lg:p-8 min-h-screen">
+
+  <div class="max-w-6xl mx-auto space-y-6">
+
+    <!-- 상단 진행자 헤더 -->
+    <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-slate-800">
+      <div class="flex items-center space-x-3">
+        <span class="text-3xl">👑</span>
+        <div>
+          <h1 class="text-2xl font-black text-white flex items-center gap-2">
+            <span>BALANCE GAME</span>
+            <span class="text-xs px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30">
+              진행자(Host) 콘솔
+            </span>
+          </h1>
+          <p class="text-xs text-slate-400 mt-0.5">실시간 게임 제어 및 개별 참가자 투표 현황 모니터링</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <!-- 룸 코드 배지 -->
+        <div class="px-3 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-xs text-slate-300 flex items-center gap-2">
+          <span>방 코드:</span>
+          <strong id="displayRoomCode" class="text-white font-mono">default</strong>
+        </div>
+
+        <!-- 접속 상태 배지 -->
+        <span id="hostConnectionBadge" class="px-3 py-1.5 text-xs rounded-xl bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-yellow-400"></span>
+          <span>상태 확인 중</span>
+        </span>
+
+        <!-- 설정 버튼 -->
+        <button onclick="openConfigModal()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center gap-1 transition">
+          ⚙️ Firebase 설정
+        </button>
+
+        <!-- 참가자 화면 바로가기 링크 -->
+        <a href="index.html" target="_blank" class="px-3 py-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-400 border border-sky-500/30 text-xs flex items-center gap-1 transition">
+          🔗 참가자 화면 새 창 ↗
+        </a>
+      </div>
+    </header>
+
+    <!-- 상단 그리드: 게임 제어기 (좌) + 실시간 모니터링 현황 (우) -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- 1. 게임 제어 패널 (좌측 7컬럼) -->
+      <section class="lg:col-span-7 glass-panel p-6 space-y-5">
+        <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+          <h2 class="text-lg font-bold text-white flex items-center gap-2">
+            <span>🎮</span> 게임 진행 컨트롤러
+          </h2>
+          <span id="gameStatusBadge" class="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">
+            대기 중 (Waiting)
+          </span>
+        </div>
+
+        <!-- 질문 선택 탭 (프리셋 vs 직접 입력) -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-300 uppercase tracking-wider">질문 선택</label>
+            <div class="flex space-x-1 text-xs">
+              <button id="btnTabPreset" onclick="switchQuestionTab('preset')" class="px-3 py-1 rounded-lg bg-sky-500 text-white font-semibold">프리셋 목록</button>
+              <button id="btnTabCustom" onclick="switchQuestionTab('custom')" class="px-3 py-1 rounded-lg bg-slate-800 text-slate-400 font-semibold hover:text-white">직접 입력</button>
+            </div>
+          </div>
+
+          <!-- A. 프리셋 드롭다운 -->
+          <div id="presetQuestionBox">
+            <select id="presetSelect" onchange="onSelectPresetQuestion()" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm outline-none focus:border-sky-500">
+              <!-- JS에서 동적 주입 -->
+            </select>
+          </div>
+
+          <!-- B. 직접 입력 폼 (숨김 기본) -->
+          <div id="customQuestionBox" class="space-y-2 hidden">
+            <input type="text" id="customTitle" placeholder="질문 제목 (예: 평생 하나만 먹는다면?)" class="w-full px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm outline-none focus:border-sky-500">
+            <div class="grid grid-cols-2 gap-2">
+              <input type="text" id="customOptionA" placeholder="선택지 A (빨강)" class="w-full px-3.5 py-2 rounded-xl bg-slate-900 border border-rose-500/40 text-white text-sm outline-none focus:border-rose-500">
+              <input type="text" id="customOptionB" placeholder="선택지 B (파랑)" class="w-full px-3.5 py-2 rounded-xl bg-slate-900 border border-sky-500/40 text-white text-sm outline-none focus:border-sky-500">
+            </div>
+          </div>
+        </div>
+
+        <!-- 현재 선택된 질문 미리보기 -->
+        <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800">
+          <span class="text-xs text-slate-400 block mb-1">출제 대기 질문 미리보기</span>
+          <h3 id="previewTitle" class="text-base font-extrabold text-white mb-2 leading-snug">질문</h3>
+          <div class="grid grid-cols-2 gap-3 text-xs">
+            <div class="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300">
+              <span class="font-bold block">[A] 선택지</span>
+              <span id="previewOptionA">선택지 A</span>
+            </div>
+            <div class="p-2.5 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-300">
+              <span class="font-bold block">[B] 선택지</span>
+              <span id="previewOptionB">선택지 B</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 타이머 설정 및 제어 버튼 모음 -->
+        <div class="space-y-3 pt-1">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-300">제한 시간(초)</label>
+            <div class="flex items-center space-x-1">
+              <button onclick="setDuration(10)" class="duration-btn px-2.5 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700">10초</button>
+              <button onclick="setDuration(15)" class="duration-btn active px-2.5 py-1 text-xs rounded-lg bg-sky-500 text-white font-bold">15초</button>
+              <button onclick="setDuration(20)" class="duration-btn px-2.5 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700">20초</button>
+              <button onclick="setDuration(30)" class="duration-btn px-2.5 py-1 text-xs rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700">30초</button>
+              <input type="number" id="customDurationInput" value="15" min="5" max="180" class="w-16 px-2 py-1 text-center text-xs rounded-lg bg-slate-900 border border-slate-700 text-white">
+            </div>
+          </div>
+
+          <!-- 주 컨트롤 버튼 -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <button 
+              id="btnStartGame" 
+              onclick="handleStartRound()" 
+              class="py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-sm shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2"
+            >
+              <span>🚀</span> 게임 시작
+            </button>
+            <button 
+              id="btnStopTimer" 
+              onclick="handleStopTimer()" 
+              disabled
+              class="py-3 px-4 rounded-xl bg-slate-800 text-slate-500 font-bold text-sm border border-slate-700 transition flex items-center justify-center gap-2 cursor-not-allowed"
+            >
+              <span>🛑</span> 조기 마감
+            </button>
+            <button 
+              id="btnResetRound" 
+              onclick="handleResetRound()" 
+              class="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm border border-slate-700 transition flex items-center justify-center gap-2"
+            >
+              <span>🔄</span> 대기 초기화
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. 실시간 모니터링 & 접속자 현황 (우측 5컬럼) -->
+      <section class="lg:col-span-5 glass-panel p-6 flex flex-col justify-between space-y-4">
+        <div>
+          <div class="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+              <span>👥</span> 실시간 참가자 현황
+            </h2>
+            <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
+              총 <strong id="hostParticipantCount">0</strong>명 접속
+            </span>
+          </div>
+
+          <!-- 라운드 실시간 투표 게이지 (진행 중일 때 표시) -->
+          <div id="liveVoteGaugeBox" class="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2 mb-4">
+            <div class="flex justify-between text-xs font-semibold">
+              <span class="text-slate-400">투표 진행 현황</span>
+              <span class="text-sky-400"><strong id="liveVotedCount">0</strong> / <span id="liveTotalCount">0</span>명 완료</span>
+            </div>
+            <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div id="liveProgressGauge" class="h-full bg-gradient-to-r from-sky-500 to-indigo-500 transition-all duration-300" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <!-- 접속자 닉네임 태그 목록 -->
+          <div>
+            <span class="text-xs text-slate-400 block mb-2">접속자 목록:</span>
+            <div id="participantTagsContainer" class="flex flex-wrap gap-2 max-h-48 overflow-y-auto pr-1">
+              <p class="text-xs text-slate-500">참가자가 접속하면 여기에 표시됩니다.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 호스트 실시간 타이머 디스플레이 -->
+        <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+          <span class="text-xs text-slate-400 font-semibold">남은 타이머</span>
+          <span id="hostTimerText" class="font-mono text-3xl font-black text-slate-300">--s</span>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- 3. 종료 후 참가자별 개별 선택 내역 확인 (Who Voted What) -->
+    <section id="individualResultSection" class="glass-panel p-6 space-y-4">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="text-xl font-extrabold text-white flex items-center gap-2">
+            <span>📋</span> 이번 라운드 참가자별 선택 내역
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">
+            접속한 인원 각각이 어떤 선택지(A/B)를 선택했는지 개별 명단을 확인합니다.
+          </p>
+        </div>
+
+        <!-- 필터 버튼 (전체 / A / B / 미투표) -->
+        <div class="flex items-center space-x-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+          <button onclick="filterParticipantList('ALL')" id="filterBtnALL" class="px-3 py-1.5 rounded-lg bg-sky-500 text-white font-semibold">전체 (<span id="filterCountALL">0</span>)</button>
+          <button onclick="filterParticipantList('A')" id="filterBtnA" class="px-3 py-1.5 rounded-lg text-rose-300 hover:bg-slate-800">A 선택 (<span id="filterCountA">0</span>)</button>
+          <button onclick="filterParticipantList('B')" id="filterBtnB" class="px-3 py-1.5 rounded-lg text-sky-300 hover:bg-slate-800">B 선택 (<span id="filterCountB">0</span>)</button>
+          <button onclick="filterParticipantList('NONE')" id="filterBtnNONE" class="px-3 py-1.5 rounded-lg text-slate-400 hover:bg-slate-800">미투표 (<span id="filterCountNONE">0</span>)</button>
+        </div>
+      </div>
+
+      <!-- 이번 질문 요약 카드 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 flex justify-between items-center">
+          <div>
+            <span class="text-xs font-bold text-rose-400 block">[A] 선택지</span>
+            <span id="hostResultOptionA" class="text-sm font-semibold text-white">옵션 A</span>
+          </div>
+          <div class="text-right">
+            <span id="hostResultCountA" class="text-2xl font-black text-rose-400">0표</span>
+            <span id="hostResultPercentA" class="text-xs text-rose-300/80 block">0%</span>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-sky-500/10 border border-sky-500/30 flex justify-between items-center">
+          <div>
+            <span class="text-xs font-bold text-sky-400 block">[B] 선택지</span>
+            <span id="hostResultOptionB" class="text-sm font-semibold text-white">옵션 B</span>
+          </div>
+          <div class="text-right">
+            <span id="hostResultCountB" class="text-2xl font-black text-sky-400">0표</span>
+            <span id="hostResultPercentB" class="text-xs text-sky-300/80 block">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 참가자별 개별 선택지 명단 테이블 -->
+      <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/60">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-slate-900 text-xs text-slate-400 uppercase border-b border-slate-800">
+            <tr>
+              <th class="px-4 py-3">번호</th>
+              <th class="px-4 py-3">참가자 닉네임</th>
+              <th class="px-4 py-3">선택한 항목</th>
+              <th class="px-4 py-3">선택지 내용</th>
+              <th class="px-4 py-3">판정 결과</th>
+              <th class="px-4 py-3">투표 시각</th>
+            </tr>
+          </thead>
+          <tbody id="participantResultTableBody" class="divide-y divide-slate-800/60 text-slate-300">
+            <tr>
+              <td colspan="6" class="px-4 py-8 text-center text-slate-500 text-xs">
+                게임을 시작하고 결과가 집계되면 참가자별 선택 내역이 여기에 출력됩니다.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 4. 종합 통계 대시보드 (Analytics & Charts) -->
+    <section class="glass-panel p-6 space-y-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="text-xl font-extrabold text-white flex items-center gap-2">
+            <span>📊</span> 누적 게임 통계 및 대중픽 랭킹
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">
+            진행된 라운드들의 통계와 참가자별 다수파 성향을 분석합니다.
+          </p>
+        </div>
+        <button onclick="exportStatsCSV()" class="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow">
+          📥 통계 데이터 CSV 다운로드
+        </button>
+      </div>
+
+      <!-- 통계 그리드 (차트 2개 + 랭킹 표) -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        
+        <!-- 차트 1: 이번 라운드 득표율 도넛 차트 -->
+        <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col items-center">
+          <h3 class="text-xs font-bold text-slate-300 mb-3">이번 라운드 득표 비율</h3>
+          <div class="w-48 h-48 relative">
+            <canvas id="voteDonutChart"></canvas>
+          </div>
+        </div>
+
+        <!-- 차트 2: 라운드별 누적 참여/투표율 바 차트 -->
+        <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col items-center">
+          <h3 class="text-xs font-bold text-slate-300 mb-3">역대 라운드별 득표 추이</h3>
+          <div class="w-full h-48 relative">
+            <canvas id="historyBarChart"></canvas>
+          </div>
+        </div>
+
+        <!-- 참가자별 다수파 적중률 순위 (대중픽 랭킹) -->
+        <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col">
+          <h3 class="text-xs font-bold text-slate-300 mb-3 flex items-center gap-1.5">
+            <span>🏆</span> 다수파 일치율 순위 (대중픽 랭킹)
+          </h3>
+          <div id="majorityRankList" class="space-y-2 overflow-y-auto max-h-48 text-xs text-slate-400 pr-1">
+            <p class="text-slate-500">여러 라운드를 진행하면 랭킹이 집계됩니다.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Firebase 설정 모달 -->
+  <div id="configModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+    <div class="glass-panel w-full max-w-md p-6 space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-700/50 pb-3">
+        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+          <span>🔥</span> Firebase 설정
+        </h3>
+        <button onclick="closeConfigModal()" class="text-slate-400 hover:text-white text-xl">✕</button>
+      </div>
+      <p class="text-xs text-slate-400 leading-relaxed">
+        현재 대상 프로젝트: <strong class="text-amber-400 font-mono">balance-efed2</strong><br>
+        <a href="https://console.firebase.google.com/project/balance-efed2/settings/general" target="_blank" class="text-sky-400 underline hover:text-sky-300 inline-flex items-center gap-1 mt-1">
+          🔗 Firebase 콘솔(balance-efed2) 웹 앱 설정 바로가기 ↗
+        </a>
+      </p>
+
+      <!-- 간편 붙여넣기 영역 -->
+      <div>
+        <label class="block text-xs font-semibold text-slate-300 mb-1">Firebase 설정 코드 붙여넣기</label>
+        <textarea 
+          id="cfgPasteArea" 
+          rows="3" 
+          placeholder="const firebaseConfig = { apiKey: '...', projectId: 'balance-efed2' }; 붙여넣기 후 [자동 채우기] 클릭"
+          class="w-full px-3 py-2 text-xs rounded-lg bg-slate-900 border border-slate-700 text-white font-mono outline-none focus:border-sky-500"
+        ></textarea>
+        <button type="button" onclick="autoParseFirebaseConfig()" class="mt-1 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-400 text-xs font-semibold">
+          ⚡ 코드 자동 분석 및 입력
+        </button>
+      </div>
+
+      <div class="space-y-2.5 pt-1">
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-0.5">Project ID</label>
+          <input type="text" id="cfgProjectId" value="balance-efed2" class="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-900 border border-slate-700 text-amber-300 font-mono outline-none focus:border-sky-500">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-0.5">API Key (*필수)</label>
+          <input type="text" id="cfgApiKey" placeholder="AIzaSy..." class="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-900 border border-slate-700 text-white outline-none focus:border-sky-500">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-0.5">방 코드 (Room ID)</label>
+          <input type="text" id="cfgRoomInput" value="default" placeholder="default" class="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-900 border border-slate-700 text-white outline-none focus:border-sky-500">
+        </div>
+      </div>
+
+      <div class="flex justify-end space-x-2 pt-2 border-t border-slate-800">
+        <button onclick="closeConfigModal()" class="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 text-sm hover:bg-slate-700">취소</button>
+        <button onclick="saveConfigModal()" class="px-4 py-2 rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white text-sm font-semibold shadow">저장 및 연결</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/default_data.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/host.js"></script>
+</body>
+</html>

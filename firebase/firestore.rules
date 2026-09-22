@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 밸런스 게임 방 규칙
+    match /rooms/{roomId} {
+      // 모든 사용자가 방 상태 읽기 및 업데이트 가능
+      allow read, write: if true;
+
+      // 참가자 목록 서브컬렉션
+      match /participants/{participantId} {
+        allow read, write: if true;
+      }
+
+      // 투표 기록 서브컬렉션
+      match /votes/{voteId} {
+        allow read, write: if true;
+      }
+    }
+
+    // 밸런스 게임 질문 컬렉션
+    match /questions/{questionId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
