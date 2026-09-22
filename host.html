@@ -65,17 +65,38 @@
         </div>
       </div>
 
-      <div class="flex items-center space-x-2.5">
-        <!-- 룸 코드 배지 -->
-        <div class="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs text-slate-600 flex items-center gap-2 shadow-sm">
-          <span>방 코드:</span>
-          <strong id="displayRoomCode" class="text-slate-900 font-mono font-bold">default</strong>
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- 룸 코드 직접 설정 영역 -->
+        <div class="p-1 rounded-xl bg-white border border-slate-300 text-xs text-slate-700 flex items-center gap-1.5 shadow-sm">
+          <span class="pl-2 font-bold text-slate-500">방 코드:</span>
+          <input 
+            type="text" 
+            id="quickRoomInput" 
+            value="default" 
+            placeholder="방 코드 입력"
+            class="px-2 py-1 font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg text-xs w-24 focus:outline-none focus:border-sky-500"
+          >
+          <button 
+            type="button" 
+            onclick="applyRoomCodeChange()" 
+            class="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs transition shadow-xs"
+          >
+            변경
+          </button>
+          <button 
+            type="button" 
+            onclick="copyParticipantLink()" 
+            class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition flex items-center gap-1"
+            title="참가 링크 복사 (방 코드가 자동으로 채워진 링크)"
+          >
+            <span>🔗</span> <span>링크 복사</span>
+          </button>
         </div>
 
         <!-- 접속 상태 배지 -->
         <span id="hostConnectionBadge" class="px-3 py-1.5 text-xs rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5 font-medium shadow-sm">
           <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-          <span>연결 확인 중</span>
+          <span>연결됨</span>
         </span>
 
         <!-- 설정 버튼 -->
@@ -181,11 +202,11 @@
           </div>
 
           <!-- 주 컨트롤 버튼 -->
-          <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <button 
               id="btnStartGame" 
               onclick="handleStartRound()" 
-              class="sm:col-span-2 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-sm shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-2"
+              class="col-span-2 sm:col-span-4 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-sm shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <span>🚀</span> <span id="btnStartGameText">1번 문제 시작</span>
             </button>
@@ -193,16 +214,25 @@
               id="btnStopTimer" 
               onclick="handleStopTimer()" 
               disabled
-              class="py-3 px-3 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 transition flex items-center justify-center gap-1.5 cursor-not-allowed"
+              class="py-2.5 px-2 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 transition flex items-center justify-center gap-1.5 cursor-not-allowed"
             >
               <span>🛑</span> 조기 마감
             </button>
             <button 
               id="btnResetRound" 
               onclick="handleResetRound()" 
-              class="py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-200 transition flex items-center justify-center gap-1.5"
+              class="py-2.5 px-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-200 transition flex items-center justify-center gap-1.5"
+              title="현재 라운드를 대기 상태로 되돌립니다."
             >
-              <span>🔄</span> 초기화
+              <span>🔄</span> 대기 초기화
+            </button>
+            <button 
+              id="btnResetEntireGame" 
+              onclick="handleResetEntireGame()" 
+              class="col-span-2 sm:col-span-2 py-2.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 transition flex items-center justify-center gap-1.5 shadow-xs"
+              title="1번 문제부터 다시 시작하고, 모든 통계와 투표 현황을 초기화하며 강퇴된 참가자들도 다시 참여할 수 있습니다."
+            >
+              <span>♻️</span> 전체 게임 초기화 (강퇴자 해제)
             </button>
           </div>
 

@@ -75,3 +75,14 @@ function initFirebase() {
   }
   return null;
 }
+
+// HTML 특수문자 이스케이프 유틸리티
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}

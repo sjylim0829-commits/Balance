@@ -68,13 +68,16 @@
         </div>
 
         <div>
-          <label class="block text-left text-xs font-bold text-slate-600 mb-1 ml-1">방 코드 (기본: default)</label>
+          <label class="block text-left text-xs font-bold text-slate-600 mb-1 ml-1 flex justify-between">
+            <span>방 코드 (Room Code)</span>
+            <span class="text-[11px] text-sky-600 font-normal">* 진행자가 설정한 코드</span>
+          </label>
           <input 
             type="text" 
             id="roomInput" 
-            value="default" 
-            placeholder="default" 
-            class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-300 focus:bg-white focus:border-sky-500 text-slate-900 placeholder-slate-400 outline-none transition"
+            placeholder="진행자에게 전달받은 방 코드 (예: 1234, default)" 
+            required
+            class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-300 focus:bg-white focus:border-sky-500 font-mono text-slate-900 placeholder-slate-400 outline-none transition"
           >
         </div>
 

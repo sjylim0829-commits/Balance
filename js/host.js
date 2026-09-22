@@ -80,9 +80,21 @@ window.addEventListener("DOMContentLoaded", () => {
 
 // 호스트 대시보드 로드
 function initHostDashboard() {
-  hostState.roomId = getRoomId();
-  document.getElementById("displayRoomCode").textContent = hostState.roomId;
-  document.getElementById("cfgRoomInput").value = hostState.roomId;
+  const urlParams = new URLSearchParams(window.location.search);
+  const queryRoom = urlParams.get("room");
+  if (queryRoom) {
+    hostState.roomId = queryRoom.trim();
+    localStorage.setItem("balance_room_id", hostState.roomId);
+  } else {
+    hostState.roomId = getRoomId();
+  }
+
+  const quickInput = document.getElementById("quickRoomInput");
+  if (quickInput) quickInput.value = hostState.roomId;
+
+  const cfgRoom = document.getElementById("cfgRoomInput");
+  if (cfgRoom) cfgRoom.value = hostState.roomId;
+
   document.getElementById("cfgHostPin").value = getHostPin();
 
   initQuestionPresets();
@@ -91,6 +103,205 @@ function initHostDashboard() {
   updateHostConnectionBadge();
   setupHostRealtimeListeners();
   initCharts();
+}
+
+// [요구사항 2] 진행자 방 코드 자유 변경
+async function applyRoomCodeChange() {
+  const input = document.getElementById("quickRoomInput");
+  const newRoom = (input ? input.value.trim() : "") || "default";
+
+  if (newRoom === hostState.roomId) {
+    alert(`이미 현재 방 코드('${newRoom}')로 설정되어 있습니다.`);
+    return;
+  }
+
+  if (hostState.status === "voting") {
+    if (!confirm("현재 투표가 진행 중입니다. 새 방으로 전환하시겠습니까?")) return;
+  }
+
+  if (hostState.timerInterval) {
+    clearInterval(hostState.timerInterval);
+    hostState.timerInterval = null;
+  }
+
+  hostState.roomId = newRoom;
+  localStorage.setItem("balance_room_id", newRoom);
+
+  const cfgRoom = document.getElementById("cfgRoomInput");
+  if (cfgRoom) cfgRoom.value = newRoom;
+
+  // URL 파라미터 갱신 (?room=newRoom)
+  try {
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.set("room", newRoom);
+    window.history.replaceState({}, "", newUrl.toString());
+  } catch (e) {}
+
+  // 기존 상태 초기화
+  hostState.connectedParticipants.clear();
+  hostState.roundVotes.clear();
+  hostState.historyRounds = [];
+  hostState.status = "waiting";
+  selectQuestionByIndex(0);
+
+  // Firestore & Broadcast 채널 재연결
+  setupHostRealtimeListeners();
+
+  // Firestore 새 방 초기 문서 설정 (status: waiting)
+  if (db) {
+    try {
+      await db.collection("rooms").doc(hostState.roomId).set({
+        status: "waiting",
+        roundIndex: 1,
+        totalRounds: hostState.totalQuestions,
+        currentQuestion: hostState.selectedQuestion,
+        resultSummary: null,
+        kickedUser: null,
+        createdAt: Date.now()
+      }, { merge: true });
+    } catch (e) {
+      console.warn("방 생성 Firestore 경고:", e);
+    }
+  }
+
+  renderParticipantTags();
+  updateLiveVoteGauge();
+  updateChartsAndRankings();
+
+  alert(`방 코드가 '${newRoom}'(으)로 변경되었습니다!\n참가자들에게 '${newRoom}' 코드를 알려주세요.`);
+}
+
+// [요구사항 2] 참가자용 링크 복사 (방 코드 자동 입력 링크)
+function copyParticipantLink() {
+  const port = window.location.port ? `:${window.location.port}` : "";
+  const base = `${window.location.protocol}//${window.location.hostname}${port}`;
+  let path = window.location.pathname;
+  if (path.endsWith("host.html")) {
+    path = path.replace(/host\.html$/, "index.html");
+  } else if (!path.endsWith("index.html")) {
+    path = path.replace(/\/[^/]*$/, "/index.html");
+  }
+  const fullLink = `${base}${path}?room=${encodeURIComponent(hostState.roomId)}`;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(fullLink).then(() => {
+      alert(`참가 링크가 클립보드에 복사되었습니다!\n\n방 코드: ${hostState.roomId}\n링크: ${fullLink}`);
+    }).catch(() => {
+      prompt("아래 링크를 복사하여 참가자들에게 공유하세요:", fullLink);
+    });
+  } else {
+    prompt("아래 링크를 복사하여 참가자들에게 공유하세요:", fullLink);
+  }
+}
+
+// [요구사항 1, 4] 전체 게임 초기화 (투표 현황, 누적 통계, 1번 문제부터 다시 시작, 강퇴된 이름도 재입장 가능)
+async function handleResetEntireGame() {
+  if (!confirm("전체 게임을 초기화하시겠습니까?\n\n• 1번 문제부터 다시 시작합니다.\n• 모든 누적 통계 및 대중픽 랭킹이 리셋됩니다.\n• 강퇴되었던 참가자들도 다시 참여할 수 있습니다.")) {
+    return;
+  }
+
+  if (hostState.timerInterval) {
+    clearInterval(hostState.timerInterval);
+    hostState.timerInterval = null;
+  }
+
+  hostState.status = "waiting";
+  hostState.roundVotes.clear();
+  hostState.historyRounds = [];
+  selectQuestionByIndex(0);
+
+  // UI 리셋
+  document.getElementById("gameStatusBadge").className = "px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200";
+  document.getElementById("gameStatusBadge").textContent = "대기 중 (Waiting)";
+
+  const btnStart = document.getElementById("btnStartGame");
+  const btnStartText = document.getElementById("btnStartGameText");
+  btnStart.disabled = false;
+  btnStart.className = "col-span-2 sm:col-span-4 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-sm shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer";
+  btnStart.onclick = handleStartRound;
+  if (btnStartText) btnStartText.textContent = "1번 문제 시작";
+
+  document.getElementById("btnStopTimer").disabled = true;
+  document.getElementById("btnStopTimer").className = "py-2.5 px-2 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 cursor-not-allowed flex items-center justify-center gap-1.5";
+
+  document.getElementById("hostTimerText").textContent = "--s";
+  const finalBox = document.getElementById("finalAnnounceBox");
+  if (finalBox) finalBox.classList.add("hidden");
+
+  // 테이블 및 랭킹 초기화
+  const tbody = document.getElementById("participantResultTableBody");
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400 text-xs">게임이 초기화되었습니다. 문제를 시작하면 참가자별 선택 내역이 여기에 출력됩니다.</td></tr>`;
+  }
+  const rankList = document.getElementById("majorityRankList");
+  if (rankList) {
+    rankList.innerHTML = `<p class="text-slate-400">여러 라운드를 진행하면 랭킹이 집계됩니다.</p>`;
+  }
+  if (hostState.donutChart) {
+    hostState.donutChart.data.datasets[0].data = [0, 0];
+    hostState.donutChart.update();
+  }
+  if (hostState.historyBarChart) {
+    hostState.historyBarChart.data.labels = [];
+    hostState.historyBarChart.data.datasets[0].data = [];
+    hostState.historyBarChart.data.datasets[1].data = [];
+    hostState.historyBarChart.update();
+  }
+
+  // 1. Local Broadcast
+  const resetMsg = {
+    event: "RESET_GAME",
+    roomId: hostState.roomId
+  };
+  if (localBroadcast) {
+    localBroadcast.postMessage({
+      ...resetMsg,
+      payload: resetMsg
+    });
+  }
+
+  // 2. Firebase Cloud Firestore 완전 초기화 (강퇴 해제 포함)
+  if (db) {
+    try {
+      const roomRef = db.collection("rooms").doc(hostState.roomId);
+
+      // (A) 기존 투표 컬렉션 전체 삭제
+      const votesRef = roomRef.collection("votes");
+      const votesSnap = await votesRef.get();
+      if (!votesSnap.empty) {
+        const batch1 = db.batch();
+        votesSnap.forEach((d) => batch1.delete(d.ref));
+        await batch1.commit();
+      }
+
+      // (B) 참가자 컬렉션의 강퇴 플래그 전부 해제 (kicked: false)
+      const partRef = roomRef.collection("participants");
+      const partSnap = await partRef.get();
+      if (!partSnap.empty) {
+        const batch2 = db.batch();
+        partSnap.forEach((d) => batch2.set(d.ref, { kicked: false }, { merge: true }));
+        await batch2.commit();
+      }
+
+      // (C) 방 메인 문서 초기화
+      await roomRef.set({
+        status: "waiting",
+        roundIndex: 1,
+        totalRounds: hostState.totalQuestions,
+        currentQuestion: hostState.selectedQuestion,
+        resultSummary: null,
+        kickedUser: null,
+        resetAt: Date.now()
+      });
+    } catch (err) {
+      console.warn("Firestore 게임 초기화 경고:", err);
+    }
+  }
+
+  renderParticipantTags();
+  updateLiveVoteGauge();
+
+  alert("게임과 통계가 성공적으로 초기화되었습니다!\n강퇴되었던 참가자들도 이제 다시 입장할 수 있습니다.");
 }
 
 // 프리셋 드롭다운 초기화
@@ -1058,12 +1269,12 @@ function exportStatsCSV() {
 
 function escapeHtml(str) {
   if (!str) return "";
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 // 설정 모달

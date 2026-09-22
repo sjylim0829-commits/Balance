@@ -23,7 +23,8 @@ const state = {
   score: 0, // [요구사항 3] 누적 점수 (0 ~ 100점)
   roundIndex: 1,
   totalRounds: 10,
-  history: [] // [요구사항 4] 10문항 복기 기록
+  history: [], // [요구사항 4] 10문항 복기 기록
+  hasParticipatedInCurrentRound: false // [요구사항 5] 현재 라운드 참여 여부 (접속하자마자 투표 미참여 모달 방지)
 };
 
 // Web Audio API 사운드 합성기
@@ -93,8 +94,15 @@ window.addEventListener("DOMContentLoaded", () => {
   const savedNick = localStorage.getItem("balance_user_nickname");
   if (savedNick) document.getElementById("nicknameInput").value = savedNick;
 
-  const savedRoom = localStorage.getItem("balance_room_id");
-  if (savedRoom) document.getElementById("roomInput").value = savedRoom;
+  // [요구사항 3] URL 파라미터 ?room= 확인 후 자동 채우기
+  const urlParams = new URLSearchParams(window.location.search);
+  const queryRoom = urlParams.get("room");
+  if (queryRoom) {
+    document.getElementById("roomInput").value = queryRoom.trim();
+  } else {
+    const savedRoom = localStorage.getItem("balance_room_id");
+    if (savedRoom) document.getElementById("roomInput").value = savedRoom;
+  }
 
   db = initFirebase();
   updateConnectionBadge();
@@ -129,6 +137,11 @@ async function handleJoinGame(e) {
   state.nickname = nickInput;
   state.roomId = roomInput;
   state.isKicked = false;
+  state.hasParticipatedInCurrentRound = false;
+  state.score = 0;
+  state.history = [];
+  closeResultModal();
+
   localStorage.setItem("balance_user_nickname", nickInput);
   localStorage.setItem("balance_room_id", roomInput);
 
@@ -136,6 +149,7 @@ async function handleJoinGame(e) {
   const roomDisplay = document.getElementById("displayRoomName");
   if (roomDisplay) roomDisplay.textContent = roomInput;
 
+  // [요구사항 5] 참여 직후에는 무조건 대기실 화면으로 입장
   switchScreen("waiting");
   setupRealtimeListeners();
 }
@@ -184,17 +198,36 @@ function setupRealtimeListeners() {
 
     // 참가자 개별 문서 등록 및 강퇴 감지
     const myPartRef = roomRef.collection("participants").doc(state.nickname);
-    myPartRef.set({
-      nickname: state.nickname,
-      lastActive: Date.now(),
-      kicked: false
-    }, { merge: true }).catch((err) => console.warn("참가자 등록 경고:", err));
+
+    // [요구사항 4] 접속 시 이미 강퇴된 상태인지 먼저 확인
+    myPartRef.get().then((docSnap) => {
+      if (docSnap.exists && docSnap.data().kicked === true) {
+        onKicked();
+      } else {
+        myPartRef.set({
+          nickname: state.nickname,
+          lastActive: Date.now(),
+          kicked: false
+        }, { merge: true }).catch((err) => console.warn("참가자 등록 경고:", err));
+      }
+    }).catch(() => {
+      myPartRef.set({
+        nickname: state.nickname,
+        lastActive: Date.now(),
+        kicked: false
+      }, { merge: true }).catch((err) => console.warn("참가자 등록 경고:", err));
+    });
 
     participantUnsubscribe = myPartRef.onSnapshot((doc) => {
       if (doc.exists) {
         const data = doc.data();
         if (data && data.kicked === true) {
           onKicked();
+        } else if (data && data.kicked === false && state.isKicked) {
+          // [요구사항 4] 호스트가 전체 초기화하여 강퇴가 해제된 경우 자동 복귀
+          state.isKicked = false;
+          document.getElementById("kickedModal").classList.add("hidden");
+          switchScreen("waiting");
         }
       }
     });
@@ -219,12 +252,19 @@ function handleRoomStateFromFirestore(roomData) {
       });
     }
   } else if (roomData.status === "result") {
+    // [요구사항 5] 만약 현재 라운드를 진행하지 않고 방에 막 들어온 경우(대기 상태),
+    // 이전 라운드 결과 팝업(투표 미참여)을 띄우지 않고 대기실 화면을 그대로 유지합니다.
+    if (!state.hasParticipatedInCurrentRound) {
+      return;
+    }
     if (roomData.resultSummary && state.gameStatus !== "result") {
       onResultsReceived(roomData.resultSummary);
     }
   } else if (roomData.status === "waiting") {
+    closeResultModal();
+    state.hasParticipatedInCurrentRound = false;
+    state.myChoice = null;
     if (state.gameStatus !== "waiting") {
-      closeResultModal();
       onRoundReset();
     }
   } else if (roomData.status === "final") {
@@ -237,7 +277,15 @@ function handleRoomStateFromFirestore(roomData) {
 
 // 로컬 BroadcastChannel 이벤트 수신
 function handleIncomingGameEvent(data) {
-  if (!data || state.isKicked) return;
+  if (!data) return;
+
+  // 전체 게임 리셋 이벤트 수신 (강퇴 해제 및 대기실 복귀)
+  if (data.event === "RESET_GAME") {
+    onResetEntireGame();
+    return;
+  }
+
+  if (state.isKicked) return;
 
   // 강퇴 이벤트 수신
   if (data.event === "KICK_USER" && data.nickname === state.nickname) {
@@ -254,6 +302,7 @@ function handleIncomingGameEvent(data) {
       onRoundStarted(payload);
       break;
     case "SHOW_RESULTS":
+      if (!state.hasParticipatedInCurrentRound) return;
       onResultsReceived(payload);
       break;
     case "RESET_ROUND":
@@ -272,7 +321,7 @@ function onKicked() {
   state.isKicked = true;
   if (state.timerInterval) clearInterval(state.timerInterval);
   if (roomUnsubscribe) roomUnsubscribe();
-  if (participantUnsubscribe) participantUnsubscribe();
+  // participantUnsubscribe는 남겨두어 호스트가 초기화 시 실시간 복귀를 감지할 수 있도록 함
 
   closeResultModal();
   document.getElementById("kickedModal").classList.remove("hidden");
@@ -285,8 +334,46 @@ function handleKickedConfirm() {
   state.myChoice = null;
   state.score = 0;
   state.history = [];
+  if (roomUnsubscribe) roomUnsubscribe();
+  if (participantUnsubscribe) participantUnsubscribe();
   localStorage.removeItem("balance_user_nickname");
   switchScreen("join");
+}
+
+// 전체 게임 초기화 (호스트 리셋 시 강퇴 해제 및 대기실 복귀)
+function onResetEntireGame() {
+  state.isKicked = false;
+  state.hasParticipatedInCurrentRound = false;
+  state.score = 0;
+  state.history = [];
+  state.myChoice = null;
+  state.currentRoundKey = "";
+  state.currentQuestion = null;
+
+  if (state.timerInterval) {
+    clearInterval(state.timerInterval);
+    state.timerInterval = null;
+  }
+
+  closeResultModal();
+  document.getElementById("kickedModal").classList.add("hidden");
+
+  const userScoreText = document.getElementById("userScoreText");
+  if (userScoreText) userScoreText.textContent = "0점";
+
+  const scoreBadge = document.getElementById("userScoreBadge");
+  if (scoreBadge) scoreBadge.classList.add("hidden");
+
+  const roundBadge = document.getElementById("userRoundBadge");
+  if (roundBadge) roundBadge.classList.add("hidden");
+
+  resetChoiceCards();
+  if (state.nickname) {
+    switchScreen("waiting");
+    setupRealtimeListeners();
+  } else {
+    switchScreen("join");
+  }
 }
 
 // 라운드 시작 이벤트 수신 시
@@ -294,6 +381,7 @@ function onRoundStarted(payload) {
   if (!payload || !payload.question) return;
 
   state.gameStatus = "voting";
+  state.hasParticipatedInCurrentRound = true;
   state.currentQuestion = payload.question;
   state.duration = payload.duration || 15;
   state.startedAt = payload.startedAt || Date.now();
@@ -682,6 +770,7 @@ function showFinalScreen(payload) {
 // 라운드 리셋 시
 function onRoundReset() {
   state.gameStatus = "waiting";
+  state.hasParticipatedInCurrentRound = false;
   state.currentQuestion = null;
   state.myChoice = null;
   state.currentRoundKey = "";
