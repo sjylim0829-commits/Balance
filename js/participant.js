@@ -14,12 +14,16 @@ const state = {
   roomId: "default",
   currentQuestion: null,
   myChoice: null, // 'A' | 'B' | null
-  gameStatus: "waiting", // 'waiting' | 'voting' | 'result'
+  gameStatus: "waiting", // 'waiting' | 'voting' | 'result' | 'final'
   timerInterval: null,
   duration: 15,
   startedAt: null,
   currentRoundKey: "",
-  isKicked: false
+  isKicked: false,
+  score: 0, // [요구사항 3] 누적 점수 (0 ~ 100점)
+  roundIndex: 1,
+  totalRounds: 10,
+  history: [] // [요구사항 4] 10문항 복기 기록
 };
 
 // Web Audio API 사운드 합성기
@@ -207,6 +211,8 @@ function handleRoomStateFromFirestore(roomData) {
       state.currentRoundKey = roundKey;
       closeResultModal();
       onRoundStarted({
+        roundIndex: roomData.roundIndex || 1,
+        totalRounds: roomData.totalRounds || 10,
         question: roomData.currentQuestion,
         duration: roomData.duration || 15,
         startedAt: roomData.startedAt || Date.now()
@@ -221,6 +227,11 @@ function handleRoomStateFromFirestore(roomData) {
       closeResultModal();
       onRoundReset();
     }
+  } else if (roomData.status === "final") {
+    if (state.gameStatus !== "final") {
+      closeResultModal();
+      showFinalScreen(roomData.finalSummary);
+    }
   }
 }
 
@@ -234,17 +245,24 @@ function handleIncomingGameEvent(data) {
     return;
   }
 
+  // payload 안전 접근 (Broadcast 또는 Firestore 객체 대응)
+  const payload = data.payload || data;
+
   switch (data.event) {
     case "START_ROUND":
       closeResultModal();
-      onRoundStarted(data.payload);
+      onRoundStarted(payload);
       break;
     case "SHOW_RESULTS":
-      onResultsReceived(data.payload);
+      onResultsReceived(payload);
       break;
     case "RESET_ROUND":
       closeResultModal();
       onRoundReset();
+      break;
+    case "FINAL_RESULTS":
+      closeResultModal();
+      showFinalScreen(payload);
       break;
   }
 }
@@ -265,17 +283,46 @@ function handleKickedConfirm() {
   state.isKicked = false;
   state.nickname = "";
   state.myChoice = null;
+  state.score = 0;
+  state.history = [];
   localStorage.removeItem("balance_user_nickname");
   switchScreen("join");
 }
 
 // 라운드 시작 이벤트 수신 시
 function onRoundStarted(payload) {
+  if (!payload || !payload.question) return;
+
   state.gameStatus = "voting";
   state.currentQuestion = payload.question;
   state.duration = payload.duration || 15;
   state.startedAt = payload.startedAt || Date.now();
   state.myChoice = null;
+  state.roundIndex = payload.roundIndex || (state.history.length + 1);
+  state.totalRounds = payload.totalRounds || 10;
+
+  // 1번 문제로 다시 시작되었을 때 점수 및 복기 리셋
+  if (state.roundIndex === 1 && state.history.length > 0) {
+    state.score = 0;
+    state.history = [];
+  }
+
+  // 상단 헤더 배지 갱신
+  const roundBadge = document.getElementById("userRoundBadge");
+  if (roundBadge) {
+    roundBadge.textContent = `Q ${state.roundIndex}/${state.totalRounds}`;
+    roundBadge.classList.remove("hidden");
+  }
+  const scoreBadge = document.getElementById("userScoreBadge");
+  const scoreText = document.getElementById("userScoreText");
+  if (scoreBadge && scoreText) {
+    scoreText.textContent = `${state.score}점`;
+    scoreBadge.classList.remove("hidden");
+  }
+
+  // 마감 안내문 숨김
+  const closedNotice = document.getElementById("votingClosedNotice");
+  if (closedNotice) closedNotice.classList.add("hidden");
 
   document.getElementById("questionTitle").textContent = payload.question.title;
   document.getElementById("questionCategory").textContent = payload.question.category || "밸런스 질문";
@@ -314,6 +361,10 @@ function startCountdown() {
       state.timerInterval = null;
       document.getElementById("cardOptionA").style.pointerEvents = "none";
       document.getElementById("cardOptionB").style.pointerEvents = "none";
+      
+      const closedNotice = document.getElementById("votingClosedNotice");
+      if (closedNotice) closedNotice.classList.remove("hidden");
+      timerText.textContent = "0s (마감)";
     }
   };
 
@@ -380,6 +431,8 @@ async function sendVote(option) {
 
 // [요구사항 3] 결과 수신 시 다수파/소수파 판정 및 "팝업 모달" 띄우기
 function onResultsReceived(payload) {
+  if (!payload) return;
+
   if (state.timerInterval) {
     clearInterval(state.timerInterval);
     state.timerInterval = null;
@@ -388,6 +441,7 @@ function onResultsReceived(payload) {
   state.gameStatus = "result";
 
   const {
+    roundIndex = state.roundIndex,
     questionTitle,
     optionA,
     optionB,
@@ -398,10 +452,12 @@ function onResultsReceived(payload) {
     percentB
   } = payload;
 
+  state.roundIndex = roundIndex;
+
   // 배경 결과 뷰 업데이트
-  document.getElementById("resultQuestionTitle").textContent = questionTitle;
-  document.getElementById("resultOptionAText").textContent = optionA;
-  document.getElementById("resultOptionBText").textContent = optionB;
+  document.getElementById("resultQuestionTitle").textContent = questionTitle || "";
+  document.getElementById("resultOptionAText").textContent = optionA || "";
+  document.getElementById("resultOptionBText").textContent = optionB || "";
   document.getElementById("resultOptionAPercent").textContent = `${percentA}% (${countA}명)`;
   document.getElementById("resultOptionBPercent").textContent = `${percentB}% (${countB}명)`;
 
@@ -424,11 +480,12 @@ function onResultsReceived(payload) {
   const inlineTitle = document.getElementById("inlineVerdictTitle");
   const inlineDesc = document.getElementById("inlineVerdictDesc");
 
-  modalBox.className = "p-6 rounded-2xl text-white shadow-lg ";
+  modalBox.className = "p-5 rounded-2xl text-white shadow-lg ";
   inlineCard.className = "p-5 rounded-2xl transition-all shadow-sm text-white ";
 
   let myPercent = 0;
   let isMajorityWin = false;
+  let roundPoints = 0;
 
   if (!state.myChoice) {
     // 미투표
@@ -442,7 +499,9 @@ function onResultsReceived(payload) {
     modalChoiceBadge.className = "px-2 py-0.5 rounded text-white font-bold bg-slate-500";
     modalChoicePercent.textContent = "-";
   } else if (majorityOption === "TIE") {
-    // 동률
+    // 동률 (50:50) - 모두 다수파로 인정 (+10점)
+    isMajorityWin = true;
+    roundPoints = 10;
     modalBox.classList.add("badge-tie");
     inlineCard.classList.add("badge-tie");
     modalIcon.textContent = inlineIcon.textContent = "⚖️";
@@ -453,8 +512,9 @@ function onResultsReceived(payload) {
     modalChoicePercent.textContent = "50%";
     SoundFx.playWin();
   } else if (state.myChoice === majorityOption) {
-    // 다수파
+    // 다수파 (+10점)
     isMajorityWin = true;
+    roundPoints = 10;
     myPercent = majorityOption === "A" ? percentA : percentB;
     modalBox.classList.add("badge-majority");
     inlineCard.classList.add("badge-majority");
@@ -470,7 +530,7 @@ function onResultsReceived(payload) {
       window.confetti({ particleCount: 90, spread: 75, origin: { y: 0.5 } });
     }
   } else {
-    // 소수파
+    // 소수파 (0점)
     myPercent = state.myChoice === "A" ? percentA : percentB;
     modalBox.classList.add("badge-minority");
     inlineCard.classList.add("badge-minority");
@@ -482,15 +542,141 @@ function onResultsReceived(payload) {
     modalChoicePercent.textContent = `${myPercent}% (소수파)`;
   }
 
-  // 화면 전환 (배경에 결과 화면 배치)
+  // [요구사항 3] 라운드별 점수 및 누적 점수 반영 (중복 방지)
+  const existingHistoryIdx = state.history.findIndex((h) => h.roundIndex === roundIndex);
+  if (existingHistoryIdx === -1) {
+    state.score = Math.min(100, state.score + roundPoints);
+    state.history.push({
+      roundIndex,
+      questionTitle: questionTitle || `문제 ${roundIndex}`,
+      myChoice: state.myChoice,
+      majorityOption,
+      isMajority: isMajorityWin,
+      pointsEarned: roundPoints
+    });
+  }
+
+  // 모달 점수 피드백 배지
+  const modalScoreBadge = document.getElementById("modalRoundScoreBadge");
+  if (modalScoreBadge) {
+    if (roundPoints > 0) {
+      modalScoreBadge.textContent = "+10점 획득! 🎯";
+      modalScoreBadge.className = "mt-2.5 inline-block px-3 py-1 rounded-full bg-emerald-500 text-white font-black text-xs shadow-sm";
+    } else {
+      modalScoreBadge.textContent = "+0점 (소수파/미선택)";
+      modalScoreBadge.className = "mt-2.5 inline-block px-3 py-1 rounded-full bg-white/20 backdrop-blur-sm text-xs font-medium text-white/90";
+    }
+  }
+
+  // 모달 및 인라인 누적 점수 갱신
+  const modalCumulative = document.getElementById("modalCumulativeScore");
+  if (modalCumulative) modalCumulative.textContent = state.score;
+
+  const modalBar = document.getElementById("modalScoreBar");
+  if (modalBar) modalBar.style.width = `${state.score}%`;
+
+  const inlineCumulative = document.getElementById("inlineCumulativeScore");
+  if (inlineCumulative) inlineCumulative.textContent = state.score;
+
+  const userScoreText = document.getElementById("userScoreText");
+  if (userScoreText) userScoreText.textContent = `${state.score}점`;
+
+  // 화면 전환
   switchScreen("result");
 
-  // [요구사항 3] 다수/소수 알림 팝업 모달 띄우기
+  // 모달 띄우기
   document.getElementById("resultModal").classList.remove("hidden");
 }
 
 function closeResultModal() {
   document.getElementById("resultModal").classList.add("hidden");
+}
+
+// [요구사항 4] 10문항 완료 시 학교 대다수 일치율 발표 화면
+function showFinalScreen(payload) {
+  state.gameStatus = "final";
+  closeResultModal();
+  switchScreen("final");
+
+  const totalAnswered = state.history.length || 10;
+  const matchCount = state.history.filter((h) => h.isMajority).length;
+  const matchPercent = Math.round((matchCount / totalAnswered) * 100);
+
+  // 대형 일치율 메시지
+  const matchPercentEl = document.getElementById("finalMatchPercent");
+  if (matchPercentEl) {
+    matchPercentEl.textContent = `${matchPercent}%`;
+  }
+
+  const scoreTag = document.getElementById("finalScoreTag");
+  if (scoreTag) {
+    scoreTag.textContent = `최종 점수: ${state.score}점 / 100점 (${matchCount}/${totalAnswered} 문항 다수파 일치)`;
+  }
+
+  // 교사 공감 페르소나 매핑
+  const emojiEl = document.getElementById("finalPersonaIcon");
+  const titleEl = document.getElementById("finalPersonaTitle");
+  const descEl = document.getElementById("finalPersonaDesc");
+
+  let emoji = "🏆";
+  let title = "교무실 핵인싸 선생님";
+  let desc = "동료 선생님들의 마음을 꿰뚫어보는 영혼의 단짝! 학교 분위기를 이끄는 최고의 공감 리더입니다.";
+
+  if (matchPercent >= 90) {
+    emoji = "🏆";
+    title = "공감 만렙! 교무실 핵인싸 선생님";
+    desc = "동료 선생님들의 마음을 꿰뚫어보는 영혼의 단짝! 학교 분위기를 언제나 밝고 훈훈하게 이끄는 최고의 공감 리더입니다.";
+  } else if (matchPercent >= 70) {
+    emoji = "⭐";
+    title = "대중의 감각을 지닌 따뜻한 공감형 선생님";
+    desc = "선생님의 선택과 가치관은 언제나 많은 동료 교사들의 든든한 공감과 지지를 얻고 있습니다.";
+  } else if (matchPercent >= 50) {
+    emoji = "⚖️";
+    title = "균형과 개성을 모두 갖춘 스마트 밸런서 선생님";
+    desc = "때로는 다수의 의견을 존중하고, 때로는 나만의 뚜렷한 주관을 지키는 황금 밸런스의 소유자입니다.";
+  } else if (matchPercent >= 30) {
+    emoji = "💡";
+    title = "남다른 시각의 창의적인 개성파 선생님";
+    desc = "남들이 미처 보지 못하는 신선한 관점과 독창적인 통찰력으로 교무실에 활력을 불어넣어 줍니다.";
+  } else {
+    emoji = "🚀";
+    title = "우주 최강 유니크! 1% 독보적 감각의 마이웨이 선생님";
+    desc = "다수의 흐름에 휩쓸리지 않고 나만의 확고한 교육관과 소신을 지닌 멋진 개척자입니다!";
+  }
+
+  if (emojiEl) emojiEl.textContent = emoji;
+  if (titleEl) titleEl.textContent = title;
+  if (descEl) descEl.textContent = desc;
+
+  // 10문항 내 선택 내역 렌더링
+  const historyList = document.getElementById("finalHistoryList");
+  if (historyList) {
+    historyList.innerHTML = "";
+    state.history.forEach((h) => {
+      const row = document.createElement("div");
+      row.className = "p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex justify-between items-center";
+
+      const isWin = h.isMajority;
+      const badgeClass = isWin ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-purple-100 text-purple-800 border-purple-200";
+      const badgeText = isWin ? "👑 다수파 (+10점)" : "⚡ 소수파 (0점)";
+      const choiceText = h.myChoice ? `[${h.myChoice}] 선택` : "미투표";
+
+      row.innerHTML = `
+        <div class="truncate max-w-[210px]">
+          <span class="font-bold text-slate-800 block text-xs truncate">Q${h.roundIndex}. ${escapeHtml(h.questionTitle)}</span>
+          <span class="text-[11px] text-slate-500">${choiceText}</span>
+        </div>
+        <span class="px-2 py-0.5 rounded-md text-[11px] font-bold border ${badgeClass} shrink-0">
+          ${badgeText}
+        </span>
+      `;
+      historyList.appendChild(row);
+    });
+  }
+
+  if (window.confetti) {
+    window.confetti({ particleCount: 110, spread: 80, origin: { y: 0.4 } });
+  }
 }
 
 // 라운드 리셋 시
@@ -501,6 +687,8 @@ function onRoundReset() {
   state.currentRoundKey = "";
   closeResultModal();
   resetChoiceCards();
+  const closedNotice = document.getElementById("votingClosedNotice");
+  if (closedNotice) closedNotice.classList.add("hidden");
   switchScreen("waiting");
 }
 
@@ -522,11 +710,14 @@ function switchScreen(screen) {
   document.getElementById("waitingScreen").classList.add("hidden");
   document.getElementById("votingScreen").classList.add("hidden");
   document.getElementById("resultScreen").classList.add("hidden");
+  const finalScreen = document.getElementById("finalScreen");
+  if (finalScreen) finalScreen.classList.add("hidden");
 
   if (screen === "join") document.getElementById("joinScreen").classList.remove("hidden");
   else if (screen === "waiting") document.getElementById("waitingScreen").classList.remove("hidden");
   else if (screen === "voting") document.getElementById("votingScreen").classList.remove("hidden");
   else if (screen === "result") document.getElementById("resultScreen").classList.remove("hidden");
+  else if (screen === "final" && finalScreen) finalScreen.classList.remove("hidden");
 }
 
 // 설정 모달

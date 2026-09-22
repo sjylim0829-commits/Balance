@@ -11,11 +11,13 @@ let localBroadcast = null;
 // 진행자 상태 객체
 const hostState = {
   roomId: "default",
-  status: "waiting", // 'waiting' | 'voting' | 'result'
+  status: "waiting", // 'waiting' | 'voting' | 'result' | 'final'
   duration: 15,
   startedAt: null,
   timerInterval: null,
   selectedQuestion: null,
+  currentQuestionIndex: 0,
+  totalQuestions: 10,
   
   // 참가자 실시간 상태 관리
   connectedParticipants: new Map(), // nickname -> { nickname, joinedAt }
@@ -99,17 +101,20 @@ function initQuestionPresets() {
   DEFAULT_QUESTIONS.forEach((q, idx) => {
     const opt = document.createElement("option");
     opt.value = idx;
-    opt.textContent = `[${q.category}] ${q.title}`;
+    opt.textContent = `Q${idx + 1}. [${q.category}] ${q.title}`;
     select.appendChild(opt);
   });
 
-  onSelectPresetQuestion();
+  selectQuestionByIndex(0);
 }
 
-// 프리셋 선택 변경 핸들러
-function onSelectPresetQuestion() {
-  const select = document.getElementById("presetSelect");
-  const q = DEFAULT_QUESTIONS[select.value];
+// 인덱스 기반 문제 선택
+function selectQuestionByIndex(idx) {
+  if (idx < 0) idx = 0;
+  if (idx >= DEFAULT_QUESTIONS.length) idx = DEFAULT_QUESTIONS.length - 1;
+
+  hostState.currentQuestionIndex = idx;
+  const q = DEFAULT_QUESTIONS[idx];
   if (!q) return;
 
   hostState.selectedQuestion = {
@@ -120,7 +125,57 @@ function onSelectPresetQuestion() {
     category: q.category
   };
 
+  const select = document.getElementById("presetSelect");
+  if (select) select.value = idx;
+
+  updateRoundUI();
   updateQuestionPreview();
+}
+
+// 라운드 네비게이션 UI 업데이트
+function updateRoundUI() {
+  const roundBadge = document.getElementById("hostRoundBadge");
+  const roundCategory = document.getElementById("hostRoundCategory");
+  const btnStartText = document.getElementById("btnStartGameText");
+
+  const currentNum = hostState.currentQuestionIndex + 1;
+  const total = hostState.totalQuestions;
+
+  if (roundBadge) roundBadge.textContent = `Q ${currentNum} / ${total}`;
+  if (roundCategory && hostState.selectedQuestion) roundCategory.textContent = hostState.selectedQuestion.category || "밸런스 질문";
+  if (btnStartText) btnStartText.textContent = `${currentNum}번 문제 시작`;
+}
+
+// 다음 문제로 이동
+function goToNextQuestion() {
+  if (hostState.status === "voting") {
+    if (!confirm("현재 투표가 진행 중입니다. 다음 문제로 이동하시겠습니까?")) return;
+    if (hostState.timerInterval) clearInterval(hostState.timerInterval);
+  }
+  if (hostState.currentQuestionIndex < hostState.totalQuestions - 1) {
+    selectQuestionByIndex(hostState.currentQuestionIndex + 1);
+  } else {
+    alert("마지막 10번째 문제입니다.");
+  }
+}
+
+// 이전 문제로 이동
+function goToPreviousQuestion() {
+  if (hostState.status === "voting") {
+    if (!confirm("현재 투표가 진행 중입니다. 이전 문제로 이동하시겠습니까?")) return;
+    if (hostState.timerInterval) clearInterval(hostState.timerInterval);
+  }
+  if (hostState.currentQuestionIndex > 0) {
+    selectQuestionByIndex(hostState.currentQuestionIndex - 1);
+  } else {
+    alert("첫 번째 문제입니다.");
+  }
+}
+
+// 프리셋 선택 변경 핸들러
+function onSelectPresetQuestion() {
+  const select = document.getElementById("presetSelect");
+  selectQuestionByIndex(parseInt(select.value, 10) || 0);
 }
 
 // 직접 입력 vs 프리셋 탭 전환
@@ -392,20 +447,29 @@ async function handleStartRound() {
   hostState.roundVotes.clear();
 
   // UI 상태 변경
-  document.getElementById("gameStatusBadge").className = "px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse";
-  document.getElementById("gameStatusBadge").textContent = "투표 진행 중 (Voting)";
+  const currentNum = hostState.currentQuestionIndex + 1;
+  const total = hostState.totalQuestions;
 
-  document.getElementById("btnStartGame").disabled = true;
-  document.getElementById("btnStartGame").className = "py-3 px-4 rounded-xl bg-slate-100 text-slate-400 font-bold text-sm border border-slate-200 cursor-not-allowed flex items-center justify-center gap-2";
+  document.getElementById("gameStatusBadge").className = "px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse";
+  document.getElementById("gameStatusBadge").textContent = `Q${currentNum}/${total} 투표 진행 중`;
+
+  const btnStart = document.getElementById("btnStartGame");
+  btnStart.disabled = true;
+  btnStart.className = "sm:col-span-2 py-3 px-4 rounded-xl bg-slate-100 text-slate-400 font-bold text-sm border border-slate-200 cursor-not-allowed flex items-center justify-center gap-2";
 
   document.getElementById("btnStopTimer").disabled = false;
-  document.getElementById("btnStopTimer").className = "py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm shadow-md shadow-rose-600/20 transition flex items-center justify-center gap-2 cursor-pointer";
+  document.getElementById("btnStopTimer").className = "py-3 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md shadow-rose-600/20 transition flex items-center justify-center gap-1.5 cursor-pointer";
+
+  const finalBox = document.getElementById("finalAnnounceBox");
+  if (finalBox) finalBox.classList.add("hidden");
 
   renderParticipantTags();
   updateLiveVoteGauge();
 
   const startPayload = {
     event: "START_ROUND",
+    roundIndex: currentNum,
+    totalRounds: total,
     question: hostState.selectedQuestion,
     duration: hostState.duration,
     startedAt: hostState.startedAt
@@ -413,14 +477,28 @@ async function handleStartRound() {
 
   // 1. Local Broadcast
   if (localBroadcast) {
-    localBroadcast.postMessage(startPayload);
+    localBroadcast.postMessage({
+      ...startPayload,
+      payload: startPayload
+    });
   }
 
-  // 2. Firebase Cloud Firestore 방 상태 업데이트
+  // 2. Firebase Cloud Firestore 방 상태 업데이트 (이전 투표 정리 포함)
   if (db) {
     try {
+      // 기존 투표 서브컬렉션 정리
+      const votesRef = db.collection("rooms").doc(hostState.roomId).collection("votes");
+      const votesSnap = await votesRef.get();
+      if (!votesSnap.empty) {
+        const batch = db.batch();
+        votesSnap.forEach((doc) => batch.delete(doc.ref));
+        await batch.commit();
+      }
+
       await db.collection("rooms").doc(hostState.roomId).set({
         status: "voting",
+        roundIndex: currentNum,
+        totalRounds: total,
         currentQuestion: hostState.selectedQuestion,
         duration: hostState.duration,
         startedAt: hostState.startedAt,
@@ -471,14 +549,14 @@ function handleStopTimer() {
 async function calculateAndShowResults() {
   hostState.status = "result";
 
-  document.getElementById("gameStatusBadge").className = "px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-300";
-  document.getElementById("gameStatusBadge").textContent = "결과 발표 (Result)";
+  const currentNum = hostState.currentQuestionIndex + 1;
+  const total = hostState.totalQuestions;
 
-  document.getElementById("btnStartGame").disabled = false;
-  document.getElementById("btnStartGame").className = "py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-sm shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer";
+  document.getElementById("gameStatusBadge").className = "px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-800 border border-purple-300";
+  document.getElementById("gameStatusBadge").textContent = `Q${currentNum} 결과 발표 (Result)`;
 
   document.getElementById("btnStopTimer").disabled = true;
-  document.getElementById("btnStopTimer").className = "py-3 px-4 rounded-xl bg-slate-100 text-slate-400 font-bold text-sm border border-slate-200 cursor-not-allowed flex items-center justify-center gap-2";
+  document.getElementById("btnStopTimer").className = "py-3 px-3 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 cursor-not-allowed flex items-center justify-center gap-1.5";
 
   document.getElementById("hostTimerText").textContent = "0s (마감)";
 
@@ -539,6 +617,8 @@ async function calculateAndShowResults() {
 
   const resultPayload = {
     event: "SHOW_RESULTS",
+    roundIndex: currentNum,
+    totalRounds: total,
     questionTitle: hostState.selectedQuestion.title,
     optionA: hostState.selectedQuestion.optionA,
     optionB: hostState.selectedQuestion.optionB,
@@ -553,7 +633,10 @@ async function calculateAndShowResults() {
 
   // 1. Local Broadcast
   if (localBroadcast) {
-    localBroadcast.postMessage(resultPayload);
+    localBroadcast.postMessage({
+      ...resultPayload,
+      payload: resultPayload
+    });
   }
 
   // 2. Firebase Cloud Firestore 업데이트
@@ -561,6 +644,8 @@ async function calculateAndShowResults() {
     try {
       await db.collection("rooms").doc(hostState.roomId).set({
         status: "result",
+        roundIndex: currentNum,
+        totalRounds: total,
         resultSummary: resultPayload
       }, { merge: true });
     } catch (err) {
@@ -569,7 +654,7 @@ async function calculateAndShowResults() {
   }
 
   hostState.historyRounds.push({
-    roundIndex: hostState.historyRounds.length + 1,
+    roundIndex: currentNum,
     question: { ...hostState.selectedQuestion },
     countA,
     countB,
@@ -580,8 +665,63 @@ async function calculateAndShowResults() {
     participantDetails
   });
 
+  // 버튼 상태 업데이트 (순차 진행: 다음 문제 버튼 or 10문제 완료 발표 버튼)
+  const nextRoundIndex = hostState.currentQuestionIndex + 1;
+  const btnStart = document.getElementById("btnStartGame");
+  const btnStartText = document.getElementById("btnStartGameText");
+  const finalBox = document.getElementById("finalAnnounceBox");
+
+  btnStart.disabled = false;
+  btnStart.className = "sm:col-span-2 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-sm shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer";
+
+  if (nextRoundIndex < hostState.totalQuestions) {
+    if (btnStartText) btnStartText.textContent = `▶ 다음 문제 (${nextRoundIndex + 1}/10) 준비`;
+    btnStart.onclick = () => {
+      goToNextQuestion();
+      btnStart.onclick = handleStartRound;
+    };
+    if (finalBox) finalBox.classList.add("hidden");
+  } else {
+    if (btnStartText) btnStartText.textContent = `🎉 10문제 완료 (최종 결과 발표)`;
+    btnStart.onclick = () => {
+      triggerFinalResults();
+    };
+    if (finalBox) finalBox.classList.remove("hidden");
+  }
+
   renderIndividualResults(resultPayload);
   updateChartsAndRankings();
+}
+
+// [요구사항 4] 최종 10문제 완료 및 학교 대다수 일치율 발표 트리거
+async function triggerFinalResults() {
+  hostState.status = "final";
+
+  const finalPayload = {
+    event: "FINAL_RESULTS",
+    totalRounds: hostState.historyRounds.length,
+    historyRounds: hostState.historyRounds
+  };
+
+  if (localBroadcast) {
+    localBroadcast.postMessage({
+      ...finalPayload,
+      payload: finalPayload
+    });
+  }
+
+  if (db) {
+    try {
+      await db.collection("rooms").doc(hostState.roomId).set({
+        status: "final",
+        finalSummary: finalPayload
+      }, { merge: true });
+    } catch (err) {
+      console.warn("Firestore 최종 결과 트리거 경고:", err);
+    }
+  }
+
+  alert("참가자 화면에 [우리학교 대다수 일치율 및 최종 점수] 결과 화면이 발표되었습니다! 🎉");
 }
 
 // 개별 참가자 선택 내역 테이블 렌더링
@@ -706,20 +846,35 @@ async function handleResetRound() {
   document.getElementById("gameStatusBadge").className = "px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200";
   document.getElementById("gameStatusBadge").textContent = "대기 중 (Waiting)";
 
-  document.getElementById("btnStartGame").disabled = false;
-  document.getElementById("btnStartGame").className = "py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-sm shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer";
+  const btnStart = document.getElementById("btnStartGame");
+  const btnStartText = document.getElementById("btnStartGameText");
+  btnStart.disabled = false;
+  btnStart.className = "sm:col-span-2 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-sm shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer";
+  btnStart.onclick = handleStartRound;
+  if (btnStartText) btnStartText.textContent = `${hostState.currentQuestionIndex + 1}번 문제 시작`;
 
   document.getElementById("btnStopTimer").disabled = true;
-  document.getElementById("btnStopTimer").className = "py-3 px-4 rounded-xl bg-slate-100 text-slate-400 font-bold text-sm border border-slate-200 cursor-not-allowed flex items-center justify-center gap-2";
+  document.getElementById("btnStopTimer").className = "py-3 px-3 rounded-xl bg-slate-100 text-slate-400 font-bold text-xs border border-slate-200 cursor-not-allowed flex items-center justify-center gap-1.5";
 
   document.getElementById("hostTimerText").textContent = "--s";
+  const finalBox = document.getElementById("finalAnnounceBox");
+  if (finalBox) finalBox.classList.add("hidden");
 
   renderParticipantTags();
   updateLiveVoteGauge();
 
-  const resetPayload = { event: "RESET_ROUND" };
+  const resetPayload = {
+    event: "RESET_ROUND",
+    roundIndex: hostState.currentQuestionIndex + 1,
+    totalRounds: hostState.totalQuestions
+  };
 
-  if (localBroadcast) localBroadcast.postMessage(resetPayload);
+  if (localBroadcast) {
+    localBroadcast.postMessage({
+      ...resetPayload,
+      payload: resetPayload
+    });
+  }
   if (db) {
     try {
       await db.collection("rooms").doc(hostState.roomId).set({
