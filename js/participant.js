@@ -1,10 +1,11 @@
 // ============================================================================
 // 참가자 클라이언트 로직 (participant.js)
-// Google Firebase (Cloud Firestore) + BroadcastChannel 듀얼 동기화 엔진
+// Google Firebase (Cloud Firestore) + 결과 팝업 모달 + 강퇴 처리
 // ============================================================================
 
 let db = null;
 let roomUnsubscribe = null;
+let participantUnsubscribe = null;
 let localBroadcast = null;
 
 // 참가자 로컬 상태
@@ -17,7 +18,8 @@ const state = {
   timerInterval: null,
   duration: 15,
   startedAt: null,
-  currentRoundKey: ""
+  currentRoundKey: "",
+  isKicked: false
 };
 
 // Web Audio API 사운드 합성기
@@ -54,7 +56,7 @@ const SoundFx = {
       const gain = this.ctx.createGain();
       osc.type = "square";
       osc.frequency.setValueAtTime(1000, this.ctx.currentTime);
-      gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.05);
       osc.connect(gain);
       gain.connect(this.ctx.destination);
@@ -71,7 +73,7 @@ const SoundFx = {
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.frequency.setValueAtTime(freq, now + i * 0.1);
-        gain.gain.setValueAtTime(0.25, now + i * 0.1);
+        gain.gain.setValueAtTime(0.2, now + i * 0.1);
         gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.1 + 0.25);
         osc.connect(gain);
         gain.connect(this.ctx.destination);
@@ -101,11 +103,11 @@ function updateConnectionBadge() {
   const cfg = getFirebaseConfig();
 
   if (db && cfg && cfg.apiKey) {
-    badge.className = "px-2.5 py-1 text-xs rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5";
-    badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span><span>Firebase (${cfg.projectId}) 연결됨</span>`;
+    badge.className = "px-2.5 py-1 text-xs rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5 font-medium shadow-sm";
+    badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span><span>Firebase (${cfg.projectId}) 연결됨</span>`;
   } else {
-    badge.className = "px-2.5 py-1 text-xs rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30 flex items-center gap-1.5";
-    badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-sky-400"></span><span>${cfg.projectId} (로컬 모드)</span>`;
+    badge.className = "px-2.5 py-1 text-xs rounded-full bg-sky-50 text-sky-700 border border-sky-200 flex items-center gap-1.5 font-medium shadow-sm";
+    badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-sky-500"></span><span>${cfg.projectId} (로컬 모드)</span>`;
   }
 }
 
@@ -122,6 +124,7 @@ async function handleJoinGame(e) {
 
   state.nickname = nickInput;
   state.roomId = roomInput;
+  state.isKicked = false;
   localStorage.setItem("balance_user_nickname", nickInput);
   localStorage.setItem("balance_room_id", roomInput);
 
@@ -130,15 +133,14 @@ async function handleJoinGame(e) {
   if (roomDisplay) roomDisplay.textContent = roomInput;
 
   switchScreen("waiting");
-
   setupRealtimeListeners();
 }
 
-// 실시간 동기화 설정 (Firebase Firestore + Local BroadcastChannel)
+// 실시간 동기화 설정 (Firestore + BroadcastChannel)
 function setupRealtimeListeners() {
   const channelName = `balance_room_${state.roomId}`;
 
-  // 1. Local BroadcastChannel (동일 기기 탭 간 즉시 동기화)
+  // 1. Local BroadcastChannel
   if (window.BroadcastChannel) {
     if (localBroadcast) localBroadcast.close();
     localBroadcast = new BroadcastChannel(channelName);
@@ -152,39 +154,58 @@ function setupRealtimeListeners() {
     });
   }
 
-  // 2. Firebase Cloud Firestore onSnapshot 리스너
+  // 2. Firebase Cloud Firestore 실시간 리스너
   db = initFirebase();
   if (db) {
-    // 이전 리스너 해제
     if (roomUnsubscribe) roomUnsubscribe();
+    if (participantUnsubscribe) participantUnsubscribe();
 
     const roomRef = db.collection("rooms").doc(state.roomId);
 
-    // 방 상태 실시간 감지
+    // 방 상태 감지
     roomUnsubscribe = roomRef.onSnapshot((doc) => {
       if (!doc.exists) return;
       const roomData = doc.data();
+
+      // [요구사항 1] 강퇴 이벤트 감지
+      if (roomData.kickedUser === state.nickname) {
+        onKicked();
+        return;
+      }
+
       handleRoomStateFromFirestore(roomData);
     }, (err) => {
       console.warn("Firestore 실시간 리스너 경고:", err);
     });
 
-    // 참가자 등록 (문서 생성/업데이트)
-    roomRef.collection("participants").doc(state.nickname).set({
+    // 참가자 개별 문서 등록 및 강퇴 감지
+    const myPartRef = roomRef.collection("participants").doc(state.nickname);
+    myPartRef.set({
       nickname: state.nickname,
-      lastActive: Date.now()
+      lastActive: Date.now(),
+      kicked: false
     }, { merge: true }).catch((err) => console.warn("참가자 등록 경고:", err));
+
+    participantUnsubscribe = myPartRef.onSnapshot((doc) => {
+      if (doc.exists) {
+        const data = doc.data();
+        if (data && data.kicked === true) {
+          onKicked();
+        }
+      }
+    });
   }
 }
 
 // Firestore 방 상태 변경 핸들러
 function handleRoomStateFromFirestore(roomData) {
-  if (!roomData || !roomData.status) return;
+  if (!roomData || !roomData.status || state.isKicked) return;
 
   if (roomData.status === "voting") {
     const roundKey = `${roomData.startedAt}_${roomData.currentQuestion ? roomData.currentQuestion.id : ""}`;
     if (state.currentRoundKey !== roundKey) {
       state.currentRoundKey = roundKey;
+      closeResultModal();
       onRoundStarted({
         question: roomData.currentQuestion,
         duration: roomData.duration || 15,
@@ -197,26 +218,55 @@ function handleRoomStateFromFirestore(roomData) {
     }
   } else if (roomData.status === "waiting") {
     if (state.gameStatus !== "waiting") {
+      closeResultModal();
       onRoundReset();
     }
   }
 }
 
-// 로컬 BroadcastChannel 이벤트 수신 핸들러
+// 로컬 BroadcastChannel 이벤트 수신
 function handleIncomingGameEvent(data) {
-  if (!data || !data.event) return;
+  if (!data || state.isKicked) return;
+
+  // 강퇴 이벤트 수신
+  if (data.event === "KICK_USER" && data.nickname === state.nickname) {
+    onKicked();
+    return;
+  }
 
   switch (data.event) {
     case "START_ROUND":
+      closeResultModal();
       onRoundStarted(data.payload);
       break;
     case "SHOW_RESULTS":
       onResultsReceived(data.payload);
       break;
     case "RESET_ROUND":
+      closeResultModal();
       onRoundReset();
       break;
   }
+}
+
+// [요구사항 1] 강퇴 처리 로직
+function onKicked() {
+  state.isKicked = true;
+  if (state.timerInterval) clearInterval(state.timerInterval);
+  if (roomUnsubscribe) roomUnsubscribe();
+  if (participantUnsubscribe) participantUnsubscribe();
+
+  closeResultModal();
+  document.getElementById("kickedModal").classList.remove("hidden");
+}
+
+function handleKickedConfirm() {
+  document.getElementById("kickedModal").classList.add("hidden");
+  state.isKicked = false;
+  state.nickname = "";
+  state.myChoice = null;
+  localStorage.removeItem("balance_user_nickname");
+  switchScreen("join");
 }
 
 // 라운드 시작 이벤트 수신 시
@@ -298,7 +348,7 @@ function handleSelectOption(option) {
   sendVote(option);
 }
 
-// 투표 데이터 전송 (Firestore 및 Local Broadcast)
+// 투표 데이터 전송
 async function sendVote(option) {
   const voteData = {
     nickname: state.nickname,
@@ -308,7 +358,6 @@ async function sendVote(option) {
     votedAt: Date.now()
   };
 
-  // 1. Local Broadcast
   if (localBroadcast) {
     localBroadcast.postMessage({
       event: "VOTE",
@@ -316,7 +365,6 @@ async function sendVote(option) {
     });
   }
 
-  // 2. Firebase Cloud Firestore 기록
   if (db && state.currentQuestion) {
     try {
       await db.collection("rooms")
@@ -330,7 +378,7 @@ async function sendVote(option) {
   }
 }
 
-// 결과 수신 시 다수파/소수파 판정 및 UI 렌더링
+// [요구사항 3] 결과 수신 시 다수파/소수파 판정 및 "팝업 모달" 띄우기
 function onResultsReceived(payload) {
   if (state.timerInterval) {
     clearInterval(state.timerInterval);
@@ -350,6 +398,7 @@ function onResultsReceived(payload) {
     percentB
   } = payload;
 
+  // 배경 결과 뷰 업데이트
   document.getElementById("resultQuestionTitle").textContent = questionTitle;
   document.getElementById("resultOptionAText").textContent = optionA;
   document.getElementById("resultOptionBText").textContent = optionB;
@@ -361,49 +410,87 @@ function onResultsReceived(payload) {
     document.getElementById("resultGaugeB").style.width = `${percentB}%`;
   }, 100);
 
-  // [다수파 / 소수파 판정 로직]
-  const container = document.getElementById("verdictContainer");
-  const iconEl = document.getElementById("verdictIcon");
-  const titleEl = document.getElementById("verdictTitle");
-  const descEl = document.getElementById("verdictDesc");
+  // 모달 요소
+  const modalBox = document.getElementById("modalVerdictBox");
+  const modalIcon = document.getElementById("modalVerdictIcon");
+  const modalTitle = document.getElementById("modalVerdictTitle");
+  const modalDesc = document.getElementById("modalVerdictDesc");
+  const modalChoiceBadge = document.getElementById("modalMyChoiceBadge");
+  const modalChoicePercent = document.getElementById("modalMyChoicePercent");
 
-  container.className = "p-6 rounded-2xl transition-all duration-500 ";
+  // 인라인 카드 요소
+  const inlineCard = document.getElementById("inlineVerdictCard");
+  const inlineIcon = document.getElementById("inlineVerdictIcon");
+  const inlineTitle = document.getElementById("inlineVerdictTitle");
+  const inlineDesc = document.getElementById("inlineVerdictDesc");
+
+  modalBox.className = "p-6 rounded-2xl text-white shadow-lg ";
+  inlineCard.className = "p-5 rounded-2xl transition-all shadow-sm text-white ";
+
+  let myPercent = 0;
+  let isMajorityWin = false;
 
   if (!state.myChoice) {
-    container.classList.add("bg-slate-800", "border", "border-slate-700");
-    iconEl.textContent = "⏱️";
-    titleEl.textContent = "투표 미참여";
-    descEl.textContent = "제한 시간 내에 선택지를 고르지 못했습니다.";
+    // 미투표
+    const bgClass = "bg-slate-700";
+    modalBox.classList.add(bgClass);
+    inlineCard.classList.add(bgClass);
+    modalIcon.textContent = inlineIcon.textContent = "⏱️";
+    modalTitle.textContent = inlineTitle.textContent = "투표 미참여";
+    modalDesc.textContent = inlineDesc.textContent = "시간 내에 선택지를 고르지 못했습니다.";
+    modalChoiceBadge.textContent = "선택 안 함";
+    modalChoiceBadge.className = "px-2 py-0.5 rounded text-white font-bold bg-slate-500";
+    modalChoicePercent.textContent = "-";
   } else if (majorityOption === "TIE") {
-    container.classList.add("badge-tie");
-    iconEl.textContent = "⚖️";
-    titleEl.textContent = "기적의 황금 밸런스!";
-    descEl.textContent = `A와 B가 정확히 50:50으로 팽팽하게 맞섰습니다!`;
+    // 동률
+    modalBox.classList.add("badge-tie");
+    inlineCard.classList.add("badge-tie");
+    modalIcon.textContent = inlineIcon.textContent = "⚖️";
+    modalTitle.textContent = inlineTitle.textContent = "기적의 황금 밸런스!";
+    modalDesc.textContent = inlineDesc.textContent = "A와 B가 정확히 50:50으로 팽팽하게 맞섰습니다!";
+    modalChoiceBadge.textContent = state.myChoice === "A" ? "[A] 선택" : "[B] 선택";
+    modalChoiceBadge.className = state.myChoice === "A" ? "px-2 py-0.5 rounded text-white font-bold bg-rose-500" : "px-2 py-0.5 rounded text-white font-bold bg-sky-600";
+    modalChoicePercent.textContent = "50%";
     SoundFx.playWin();
   } else if (state.myChoice === majorityOption) {
-    const winPercent = majorityOption === "A" ? percentA : percentB;
-    container.classList.add("badge-majority");
-    iconEl.textContent = "👑";
-    titleEl.textContent = "다수파 승리!";
-    descEl.textContent = `전체 참가자의 ${winPercent}%가 당신과 같은 선택을 했습니다!`;
-    SoundFx.playWin();
+    // 다수파
+    isMajorityWin = true;
+    myPercent = majorityOption === "A" ? percentA : percentB;
+    modalBox.classList.add("badge-majority");
+    inlineCard.classList.add("badge-majority");
+    modalIcon.textContent = inlineIcon.textContent = "👑";
+    modalTitle.textContent = inlineTitle.textContent = "당신은 [다수파] 승리!";
+    modalDesc.textContent = inlineDesc.textContent = `전체 참가자의 ${myPercent}%가 당신과 같은 선택을 했습니다!`;
+    modalChoiceBadge.textContent = state.myChoice === "A" ? "[A] 선택" : "[B] 선택";
+    modalChoiceBadge.className = state.myChoice === "A" ? "px-2 py-0.5 rounded text-white font-bold bg-rose-500" : "px-2 py-0.5 rounded text-white font-bold bg-sky-600";
+    modalChoicePercent.textContent = `${myPercent}% (다수파)`;
 
+    SoundFx.playWin();
     if (window.confetti) {
-      window.confetti({
-        particleCount: 80,
-        spread: 70,
-        origin: { y: 0.6 }
-      });
+      window.confetti({ particleCount: 90, spread: 75, origin: { y: 0.5 } });
     }
   } else {
-    const myPercent = state.myChoice === "A" ? percentA : percentB;
-    container.classList.add("badge-minority");
-    iconEl.textContent = "⚡";
-    titleEl.textContent = "개성 넘치는 소수파!";
-    descEl.textContent = `오직 ${myPercent}%만이 선택한 당신만의 특별한 취향!`;
+    // 소수파
+    myPercent = state.myChoice === "A" ? percentA : percentB;
+    modalBox.classList.add("badge-minority");
+    inlineCard.classList.add("badge-minority");
+    modalIcon.textContent = inlineIcon.textContent = "⚡";
+    modalTitle.textContent = inlineTitle.textContent = "당신은 [소수파] 당첨!";
+    modalDesc.textContent = inlineDesc.textContent = `오직 ${myPercent}%만이 선택한 당신만의 특별한 취향!`;
+    modalChoiceBadge.textContent = state.myChoice === "A" ? "[A] 선택" : "[B] 선택";
+    modalChoiceBadge.className = state.myChoice === "A" ? "px-2 py-0.5 rounded text-white font-bold bg-rose-500" : "px-2 py-0.5 rounded text-white font-bold bg-sky-600";
+    modalChoicePercent.textContent = `${myPercent}% (소수파)`;
   }
 
+  // 화면 전환 (배경에 결과 화면 배치)
   switchScreen("result");
+
+  // [요구사항 3] 다수/소수 알림 팝업 모달 띄우기
+  document.getElementById("resultModal").classList.remove("hidden");
+}
+
+function closeResultModal() {
+  document.getElementById("resultModal").classList.add("hidden");
 }
 
 // 라운드 리셋 시
@@ -412,6 +499,7 @@ function onRoundReset() {
   state.currentQuestion = null;
   state.myChoice = null;
   state.currentRoundKey = "";
+  closeResultModal();
   resetChoiceCards();
   switchScreen("waiting");
 }
@@ -441,34 +529,11 @@ function switchScreen(screen) {
   else if (screen === "result") document.getElementById("resultScreen").classList.remove("hidden");
 }
 
-// Firebase 설정 모달 파서 & 열기/닫기
-function autoParseFirebaseConfig() {
-  const text = document.getElementById("cfgPasteArea").value;
-  if (!text) return;
-
-  const extract = (key) => {
-    const match = text.match(new RegExp(`${key}["'\\s:]+([^"',\\s}]+)`));
-    return match ? match[1] : "";
-  };
-
-  const projectId = extract("projectId");
-  const apiKey = extract("apiKey");
-  const appId = extract("appId");
-
-  if (projectId) document.getElementById("cfgProjectId").value = projectId;
-  if (apiKey) document.getElementById("cfgApiKey").value = apiKey;
-  if (appId) document.getElementById("cfgAppId").value = appId;
-
-  if (projectId) {
-    alert("Firebase 설정 코드가 성공적으로 자동 분석되었습니다!");
-  }
-}
-
+// 설정 모달
 function openConfigModal() {
   const cfg = getFirebaseConfig();
   document.getElementById("cfgProjectId").value = cfg.projectId || "";
   document.getElementById("cfgApiKey").value = cfg.apiKey || "";
-  document.getElementById("cfgAppId").value = cfg.appId || "";
   document.getElementById("configModal").classList.remove("hidden");
 }
 
@@ -479,26 +544,15 @@ function closeConfigModal() {
 function saveConfigModal() {
   const projectId = document.getElementById("cfgProjectId").value.trim();
   const apiKey = document.getElementById("cfgApiKey").value.trim();
-  const appId = document.getElementById("cfgAppId").value.trim();
 
   if (!projectId) {
     alert("Project ID는 필수입니다!");
     return;
   }
 
-  const newConfig = {
-    apiKey,
-    projectId,
-    appId,
-    authDomain: `${projectId}.firebaseapp.com`
-  };
-
-  saveFirebaseConfig(newConfig, state.roomId);
+  saveFirebaseConfig({ projectId, apiKey }, state.roomId);
   closeConfigModal();
   db = initFirebase();
   updateConnectionBadge();
-  if (state.nickname) {
-    setupRealtimeListeners();
-  }
-  alert("Firebase 설정이 저장되었습니다!");
+  alert("설정이 저장되었습니다!");
 }

@@ -1,19 +1,21 @@
 /* ==========================================================================
    실시간 밸런스 게임 스타일시트 (style.css)
-   Modern Dark Theme, Glassmorphism & High-Contrast A vs B Palette
+   Clean & Vibrant Light Theme, High-Contrast A vs B Palette
    ========================================================================== */
 
 :root {
-  --bg-dark: #0b0f19;
-  --bg-card: rgba(18, 24, 39, 0.85);
-  --border-card: rgba(255, 255, 255, 0.08);
-  --accent-a: #f43f5e;       /* Red / Rose */
-  --accent-a-glow: rgba(244, 63, 94, 0.4);
-  --accent-b: #0ea5e9;       /* Blue / Sky */
-  --accent-b-glow: rgba(14, 165, 233, 0.4);
+  --bg-light: #f8fafc;
+  --bg-card: rgba(255, 255, 255, 0.95);
+  --border-card: rgba(226, 232, 240, 0.9);
+  --accent-a: #f43f5e;       /* Rose / Coral */
+  --accent-a-glow: rgba(244, 63, 94, 0.25);
+  --accent-b: #0284c7;       /* Sky / Ocean Blue */
+  --accent-b-glow: rgba(2, 132, 199, 0.25);
   --accent-gold: #f59e0b;
   --accent-emerald: #10b981;
   --accent-purple: #8b5cf6;
+  --text-main: #0f172a;      /* Slate 900 */
+  --text-muted: #64748b;     /* Slate 500 */
   --font-main: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, sans-serif;
 }
 
@@ -25,39 +27,39 @@
 
 body {
   font-family: var(--font-main);
-  background-color: var(--bg-dark);
+  background-color: var(--bg-light);
   background-image: 
-    radial-gradient(at 0% 0%, rgba(244, 63, 94, 0.12) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(14, 165, 233, 0.12) 0px, transparent 50%),
-    radial-gradient(at 50% 50%, rgba(139, 92, 246, 0.05) 0px, transparent 50%);
+    radial-gradient(at 0% 0%, rgba(244, 63, 94, 0.08) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(2, 132, 199, 0.08) 0px, transparent 50%),
+    radial-gradient(at 50% 50%, rgba(139, 92, 246, 0.03) 0px, transparent 50%);
   background-attachment: fixed;
-  color: #f1f5f9;
+  color: var(--text-main);
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
 }
 
-/* Glassmorphism Card Container */
+/* Glassmorphism Card Container (Light Mode) */
 .glass-panel {
   background: var(--bg-card);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-card);
   border-radius: 20px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.06), 0 8px 10px -6px rgba(15, 23, 42, 0.04);
 }
 
-/* Header & Logos */
+/* Brand Title */
 .brand-title {
-  background: linear-gradient(135deg, #f43f5e 0%, #a855f7 50%, #0ea5e9 100%);
+  background: linear-gradient(135deg, #e11d48 0%, #9333ea 50%, #0284c7 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  font-weight: 800;
+  font-weight: 900;
   letter-spacing: -0.5px;
 }
 
-/* Timer Animation */
+/* Timer Warning Pulse */
 .timer-pulse {
   animation: pulseWarning 0.8s infinite alternate;
 }
@@ -69,15 +71,15 @@ body {
   }
   to {
     transform: scale(1.1);
-    color: #f87171;
-    text-shadow: 0 0 12px rgba(239, 68, 68, 0.8);
+    color: #dc2626;
+    text-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
   }
 }
 
 /* Choice Cards (A vs B) */
 .choice-card {
   position: relative;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
   user-select: none;
   border-width: 2px;
@@ -85,17 +87,18 @@ body {
 }
 
 .choice-card:hover {
-  transform: translateY(-4px);
+  transform: translateY(-3px);
 }
 
 .choice-card:active {
   transform: scale(0.98);
 }
 
-/* Choice A Styling */
+/* Choice A Styling (Light Mode) */
 .choice-card-a {
-  border-color: rgba(244, 63, 94, 0.3);
-  background: linear-gradient(145deg, rgba(244, 63, 94, 0.12), rgba(18, 24, 39, 0.9));
+  border-color: rgba(244, 63, 94, 0.35);
+  background: linear-gradient(145deg, #fff1f2 0%, #ffffff 100%);
+  box-shadow: 0 4px 15px rgba(244, 63, 94, 0.06);
 }
 
 .choice-card-a:hover {
@@ -105,14 +108,15 @@ body {
 
 .choice-card-a.selected {
   border-color: var(--accent-a);
-  background: linear-gradient(145deg, rgba(244, 63, 94, 0.3), rgba(244, 63, 94, 0.1));
-  box-shadow: 0 0 30px var(--accent-a-glow);
+  background: linear-gradient(145deg, #ffe4e6 0%, #ffffff 100%);
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.3), 0 10px 25px -5px var(--accent-a-glow);
 }
 
-/* Choice B Styling */
+/* Choice B Styling (Light Mode) */
 .choice-card-b {
-  border-color: rgba(14, 165, 233, 0.3);
-  background: linear-gradient(145deg, rgba(14, 165, 233, 0.12), rgba(18, 24, 39, 0.9));
+  border-color: rgba(2, 132, 199, 0.35);
+  background: linear-gradient(145deg, #f0f9ff 0%, #ffffff 100%);
+  box-shadow: 0 4px 15px rgba(2, 132, 199, 0.06);
 }
 
 .choice-card-b:hover {
@@ -122,67 +126,82 @@ body {
 
 .choice-card-b.selected {
   border-color: var(--accent-b);
-  background: linear-gradient(145deg, rgba(14, 165, 233, 0.3), rgba(14, 165, 233, 0.1));
-  box-shadow: 0 0 30px var(--accent-b-glow);
+  background: linear-gradient(145deg, #e0f2fe 0%, #ffffff 100%);
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.3), 0 10px 25px -5px var(--accent-b-glow);
 }
 
 /* Result Verdict Badges */
 .badge-majority {
   background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   color: white;
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
-  animation: bounceIn 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4);
+  animation: bounceIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 .badge-minority {
   background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
   color: white;
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.5);
-  animation: bounceIn 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 10px 25px -5px rgba(139, 92, 246, 0.4);
+  animation: bounceIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 .badge-tie {
-  background: linear-gradient(135deg, #0ea5e9 0%, #f59e0b 100%);
+  background: linear-gradient(135deg, #0284c7 0%, #f59e0b 100%);
   color: white;
-  box-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
-  animation: bounceIn 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 10px 25px -5px rgba(245, 158, 11, 0.4);
+  animation: bounceIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 @keyframes bounceIn {
-  0% { transform: scale(0.3); opacity: 0; }
-  70% { transform: scale(1.08); opacity: 1; }
+  0% { transform: scale(0.4); opacity: 0; }
+  70% { transform: scale(1.06); opacity: 1; }
   100% { transform: scale(1); }
 }
 
 /* Gauge Bar Progress Transition */
 .vote-gauge {
-  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width 0.9s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* VS Badge Glow */
+/* VS Badge */
 .vs-circle {
-  background: #1e293b;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  color: #94a3b8;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-/* Participant List Tag */
+/* Participant List Tag (Light Mode) */
 .participant-tag {
-  background: rgba(30, 41, 59, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 9999px;
-  padding: 4px 12px;
+  padding: 5px 12px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 0.875rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   transition: all 0.2s;
 }
 
 .participant-tag:hover {
-  background: rgba(51, 65, 85, 0.9);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+/* Kick Button on Tag */
+.btn-kick {
+  color: #94a3b8;
+  border-radius: 9999px;
+  padding: 1px 4px;
+  font-size: 11px;
+  transition: all 0.2s;
+}
+
+.btn-kick:hover {
+  background: #fee2e2;
+  color: #ef4444;
 }
 
 /* Scrollbar Customization */
@@ -191,12 +210,12 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+  background: #f1f5f9;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(100, 116, 139, 0.4);
+  background: #cbd5e1;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.7);
+  background: #94a3b8;
 }
