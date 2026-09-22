@@ -95,6 +95,9 @@ function initHostDashboard() {
   const cfgRoom = document.getElementById("cfgRoomInput");
   if (cfgRoom) cfgRoom.value = hostState.roomId;
 
+  const displayBadge = document.getElementById("currentActiveRoomBadge");
+  if (displayBadge) displayBadge.textContent = `현재: ${hostState.roomId}`;
+
   document.getElementById("cfgHostPin").value = getHostPin();
 
   initQuestionPresets();
@@ -105,19 +108,97 @@ function initHostDashboard() {
   initCharts();
 }
 
-// [요구사항 2] 진행자 방 코드 자유 변경
-async function applyRoomCodeChange() {
-  const input = document.getElementById("quickRoomInput");
-  const newRoom = (input ? input.value.trim() : "") || "default";
+// 토스트 안내 알림 표시 헬퍼
+function showToastNotification(message, isError = false) {
+  const toast = document.getElementById("hostToast");
+  const text = document.getElementById("hostToastText");
+  const icon = document.getElementById("hostToastIcon");
+  if (!toast || !text) {
+    alert(message);
+    return;
+  }
+  text.textContent = message;
+  if (icon) icon.textContent = isError ? "⚠️" : "✅";
 
-  if (newRoom === hostState.roomId) {
-    alert(`이미 현재 방 코드('${newRoom}')로 설정되어 있습니다.`);
+  toast.classList.remove("-translate-y-4", "opacity-0", "pointer-events-none");
+  toast.classList.add("translate-y-0", "opacity-100");
+
+  if (window.hostToastTimeout) clearTimeout(window.hostToastTimeout);
+  window.hostToastTimeout = setTimeout(() => {
+    toast.classList.add("-translate-y-4", "opacity-0", "pointer-events-none");
+    toast.classList.remove("translate-y-0", "opacity-100");
+  }, 3500);
+}
+
+// 텍스트 클립보드 복사 헬퍼 (모든 브라우저 및 file://, http://, https:// 100% 호환)
+function copyTextToClipboard(text) {
+  let success = false;
+  try {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "-9999px";
+    textArea.setAttribute("readonly", "");
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, 99999);
+    success = document.execCommand("copy");
+    document.body.removeChild(textArea);
+  } catch (e) {
+    success = false;
+  }
+
+  if (!success && navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => false);
+  }
+
+  return Promise.resolve(success);
+}
+
+// 참가자 공유용 URL 생성 헬퍼
+function getParticipantShareUrl(roomId) {
+  const room = roomId || hostState.roomId || "default";
+  const protocol = window.location.protocol;
+  const host = window.location.host;
+  let path = window.location.pathname;
+
+  // 로컬 파일 (file://) 환경
+  if (protocol === "file:") {
+    if (path.endsWith("host.html")) {
+      path = path.replace(/host\.html$/, "index.html");
+    } else {
+      path = path.replace(/\/[^/]*$/, "/index.html");
+    }
+    return `file://${path}?room=${encodeURIComponent(room)}`;
+  }
+
+  // 웹 서버 (http: / https:) 환경
+  if (path.endsWith("host.html")) {
+    path = path.replace(/host\.html$/, "index.html");
+  } else if (!path.endsWith("index.html")) {
+    path = path.replace(/\/[^/]*$/, "/index.html");
+  }
+
+  return `${protocol}//${host}${path}?room=${encodeURIComponent(room)}`;
+}
+
+// [요구사항 2] 진행자 방 코드 자유 변경
+async function applyRoomCodeChange(customRoom, isSilent = false) {
+  const input = document.getElementById("quickRoomInput");
+  const newRoom = (customRoom || (input ? input.value.trim() : "")) || "default";
+
+  if (newRoom === hostState.roomId && !customRoom) {
+    showToastNotification(`이미 현재 방 코드('${newRoom}')로 설정되어 있습니다.`);
     return;
   }
 
-  if (hostState.status === "voting") {
+  if (hostState.status === "voting" && !isSilent) {
     if (!confirm("현재 투표가 진행 중입니다. 새 방으로 전환하시겠습니까?")) return;
   }
+
+  const oldRoom = hostState.roomId;
 
   if (hostState.timerInterval) {
     clearInterval(hostState.timerInterval);
@@ -127,8 +208,12 @@ async function applyRoomCodeChange() {
   hostState.roomId = newRoom;
   localStorage.setItem("balance_room_id", newRoom);
 
+  if (input) input.value = newRoom;
   const cfgRoom = document.getElementById("cfgRoomInput");
   if (cfgRoom) cfgRoom.value = newRoom;
+
+  const displayBadge = document.getElementById("currentActiveRoomBadge");
+  if (displayBadge) displayBadge.textContent = `현재: ${newRoom}`;
 
   // URL 파라미터 갱신 (?room=newRoom)
   try {
@@ -144,53 +229,110 @@ async function applyRoomCodeChange() {
   hostState.status = "waiting";
   selectQuestionByIndex(0);
 
+  // 이전 방에 연결되어 있던 참가자들에게 방 변경 알림 브로드캐스트
+  if (localBroadcast && oldRoom && oldRoom !== newRoom) {
+    try {
+      localBroadcast.postMessage({
+        event: "ROOM_CODE_CHANGED",
+        oldRoom: oldRoom,
+        newRoom: newRoom
+      });
+    } catch (e) {}
+  }
+
   // Firestore & Broadcast 채널 재연결
   setupHostRealtimeListeners();
 
   // Firestore 새 방 초기 문서 설정 (status: waiting)
   if (db) {
-    try {
-      await db.collection("rooms").doc(hostState.roomId).set({
-        status: "waiting",
-        roundIndex: 1,
-        totalRounds: hostState.totalQuestions,
-        currentQuestion: hostState.selectedQuestion,
-        resultSummary: null,
-        kickedUser: null,
-        createdAt: Date.now()
-      }, { merge: true });
-    } catch (e) {
-      console.warn("방 생성 Firestore 경고:", e);
+    db.collection("rooms").doc(hostState.roomId).set({
+      status: "waiting",
+      roundIndex: 1,
+      totalRounds: hostState.totalQuestions,
+      currentQuestion: hostState.selectedQuestion,
+      resultSummary: null,
+      kickedUser: null,
+      createdAt: Date.now()
+    }, { merge: true }).catch((e) => console.warn("방 생성 Firestore 경고:", e));
+
+    if (oldRoom && oldRoom !== newRoom) {
+      db.collection("rooms").doc(oldRoom).set({
+        status: "room_changed",
+        newRoom: newRoom,
+        updatedAt: Date.now()
+      }, { merge: true }).catch(() => {});
     }
   }
 
   renderParticipantTags();
   updateLiveVoteGauge();
-  updateChartsAndRankings();
 
-  alert(`방 코드가 '${newRoom}'(으)로 변경되었습니다!\n참가자들에게 '${newRoom}' 코드를 알려주세요.`);
+  // 통계 차트 및 테이블 초기화
+  if (hostState.donutChart) {
+    hostState.donutChart.data.datasets[0].data = [0, 0];
+    hostState.donutChart.update();
+  }
+  if (hostState.historyBarChart) {
+    hostState.historyBarChart.data.labels = [];
+    hostState.historyBarChart.data.datasets[0].data = [];
+    hostState.historyBarChart.data.datasets[1].data = [];
+    hostState.historyBarChart.update();
+  }
+  const tbody = document.getElementById("participantResultTableBody");
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400 text-xs">방 코드가 '${newRoom}'(으)로 변경되었습니다. 참가자들이 접속하면 여기에 표시됩니다.</td></tr>`;
+  }
+  const rankList = document.getElementById("majorityRankList");
+  if (rankList) {
+    rankList.innerHTML = `<p class="text-slate-400">참가자 투표가 쌓이면 순위가 표시됩니다.</p>`;
+  }
+
+  // 버튼 피드백 애니메이션
+  const btn = document.getElementById("btnApplyRoomCode");
+  if (btn) {
+    const originalText = btn.innerHTML;
+    btn.innerHTML = `<span>✅</span> <span>변경됨</span>`;
+    setTimeout(() => {
+      btn.innerHTML = originalText;
+    }, 1500);
+  }
+
+  if (!isSilent) {
+    showToastNotification(`🔑 방 코드가 '${newRoom}'(으)로 변경되었습니다!\n참가자들에게 '${newRoom}' 코드를 알려주세요.`);
+  }
 }
 
 // [요구사항 2] 참가자용 링크 복사 (방 코드 자동 입력 링크)
-function copyParticipantLink() {
-  const port = window.location.port ? `:${window.location.port}` : "";
-  const base = `${window.location.protocol}//${window.location.hostname}${port}`;
-  let path = window.location.pathname;
-  if (path.endsWith("host.html")) {
-    path = path.replace(/host\.html$/, "index.html");
-  } else if (!path.endsWith("index.html")) {
-    path = path.replace(/\/[^/]*$/, "/index.html");
-  }
-  const fullLink = `${base}${path}?room=${encodeURIComponent(hostState.roomId)}`;
+async function copyParticipantLink() {
+  const quickInput = document.getElementById("quickRoomInput");
+  const typedRoom = (quickInput ? quickInput.value.trim() : "") || "default";
 
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(fullLink).then(() => {
-      alert(`참가 링크가 클립보드에 복사되었습니다!\n\n방 코드: ${hostState.roomId}\n링크: ${fullLink}`);
-    }).catch(() => {
-      prompt("아래 링크를 복사하여 참가자들에게 공유하세요:", fullLink);
-    });
+  // 만약 입력창에 새 방 코드를 적고 [변경]을 누르지 않은 채 [링크 복사]를 누른 경우, 자동으로 방 코드 변경 적용
+  if (typedRoom !== hostState.roomId) {
+    await applyRoomCodeChange(typedRoom, true);
+  }
+
+  const fullLink = getParticipantShareUrl(hostState.roomId);
+  const copied = await copyTextToClipboard(fullLink);
+
+  // 버튼 시각적 피드백
+  const btn = document.getElementById("btnCopyParticipantLink");
+  if (btn) {
+    const originalContent = btn.innerHTML;
+    btn.innerHTML = `<span>✅</span> <span>링크 복사 완료!</span>`;
+    btn.classList.remove("bg-slate-100", "text-slate-700");
+    btn.classList.add("bg-emerald-50", "text-emerald-700", "border-emerald-300");
+    setTimeout(() => {
+      btn.innerHTML = originalContent;
+      btn.classList.remove("bg-emerald-50", "text-emerald-700", "border-emerald-300");
+      btn.classList.add("bg-slate-100", "text-slate-700");
+    }, 2500);
+  }
+
+  if (copied) {
+    showToastNotification(`📋 참가 링크가 클립보드에 복사되었습니다!\n방 코드: [ ${hostState.roomId} ]\n링크: ${fullLink}`);
   } else {
-    prompt("아래 링크를 복사하여 참가자들에게 공유하세요:", fullLink);
+    prompt(`아래 참가 링크를 복사하여 참가자들에게 공유하세요 (방 코드: ${hostState.roomId}):`, fullLink);
   }
 }
 
@@ -493,17 +635,14 @@ function setupHostRealtimeListeners() {
 
     // 참가자 서브컬렉션 감지
     participantsUnsubscribe = roomRef.collection("participants").onSnapshot((snapshot) => {
+      hostState.connectedParticipants.clear();
       snapshot.forEach((doc) => {
         const data = doc.data();
-        if (data && data.nickname) {
-          if (data.kicked === true) {
-            hostState.connectedParticipants.delete(data.nickname);
-          } else {
-            hostState.connectedParticipants.set(data.nickname, {
-              nickname: data.nickname,
-              joinedAt: data.lastActive || Date.now()
-            });
-          }
+        if (data && data.nickname && data.kicked !== true) {
+          hostState.connectedParticipants.set(data.nickname, {
+            nickname: data.nickname,
+            joinedAt: data.lastActive || Date.now()
+          });
         }
       });
       renderParticipantTags();
@@ -511,6 +650,7 @@ function setupHostRealtimeListeners() {
 
     // 투표 서브컬렉션 감지
     votesUnsubscribe = roomRef.collection("votes").onSnapshot((snapshot) => {
+      hostState.roundVotes.clear();
       snapshot.forEach((doc) => {
         const data = doc.data();
         if (data && data.nickname && data.option) {

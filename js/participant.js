@@ -97,12 +97,29 @@ window.addEventListener("DOMContentLoaded", () => {
   // [요구사항 3] URL 파라미터 ?room= 확인 후 자동 채우기
   const urlParams = new URLSearchParams(window.location.search);
   const queryRoom = urlParams.get("room");
+  const autoNotice = document.getElementById("roomCodeAutoNotice");
+  const defaultNotice = document.getElementById("roomCodeDefaultNotice");
+
   if (queryRoom) {
     document.getElementById("roomInput").value = queryRoom.trim();
+    if (autoNotice) autoNotice.classList.remove("hidden");
+    if (defaultNotice) defaultNotice.classList.add("hidden");
   } else {
     const savedRoom = localStorage.getItem("balance_room_id");
     if (savedRoom) document.getElementById("roomInput").value = savedRoom;
+    if (autoNotice) autoNotice.classList.add("hidden");
+    if (defaultNotice) defaultNotice.classList.remove("hidden");
   }
+
+  // 진행자가 방 코드를 바꾼 경우 입장 화면에서도 실시간 반영
+  window.addEventListener("storage", (e) => {
+    if (e.key === "balance_room_id" && e.newValue) {
+      const roomInput = document.getElementById("roomInput");
+      if (roomInput && (!state.gameStatus || state.gameStatus === "join")) {
+        roomInput.value = e.newValue;
+      }
+    }
+  });
 
   db = initFirebase();
   updateConnectionBadge();
@@ -238,6 +255,15 @@ function setupRealtimeListeners() {
 function handleRoomStateFromFirestore(roomData) {
   if (!roomData || !roomData.status || state.isKicked) return;
 
+  if (roomData.status === "room_changed" && roomData.newRoom && roomData.newRoom !== state.roomId) {
+    state.roomId = roomData.newRoom;
+    localStorage.setItem("balance_room_id", roomData.newRoom);
+    const roomDisplay = document.getElementById("displayRoomName");
+    if (roomDisplay) roomDisplay.textContent = roomData.newRoom;
+    setupRealtimeListeners();
+    return;
+  }
+
   if (roomData.status === "voting") {
     const roundKey = `${roomData.startedAt}_${roomData.currentQuestion ? roomData.currentQuestion.id : ""}`;
     if (state.currentRoundKey !== roundKey) {
@@ -278,6 +304,16 @@ function handleRoomStateFromFirestore(roomData) {
 // 로컬 BroadcastChannel 이벤트 수신
 function handleIncomingGameEvent(data) {
   if (!data) return;
+
+  // 진행자 방 코드 변경 이벤트 수신
+  if (data.event === "ROOM_CODE_CHANGED" && data.newRoom && data.newRoom !== state.roomId) {
+    state.roomId = data.newRoom;
+    localStorage.setItem("balance_room_id", data.newRoom);
+    const roomDisplay = document.getElementById("displayRoomName");
+    if (roomDisplay) roomDisplay.textContent = data.newRoom;
+    setupRealtimeListeners();
+    return;
+  }
 
   // 전체 게임 리셋 이벤트 수신 (강퇴 해제 및 대기실 복귀)
   if (data.event === "RESET_GAME") {

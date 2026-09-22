@@ -67,30 +67,41 @@
 
       <div class="flex flex-wrap items-center gap-2">
         <!-- 룸 코드 직접 설정 영역 -->
-        <div class="p-1 rounded-xl bg-white border border-slate-300 text-xs text-slate-700 flex items-center gap-1.5 shadow-sm">
-          <span class="pl-2 font-bold text-slate-500">방 코드:</span>
-          <input 
-            type="text" 
-            id="quickRoomInput" 
-            value="default" 
-            placeholder="방 코드 입력"
-            class="px-2 py-1 font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg text-xs w-24 focus:outline-none focus:border-sky-500"
-          >
+        <div class="p-1.5 rounded-xl bg-white border border-slate-300 text-xs text-slate-700 flex flex-wrap items-center gap-1.5 shadow-sm">
+          <span class="pl-2 font-bold text-slate-600 flex items-center gap-1">
+            <span>🔑</span> <span>방 코드:</span>
+          </span>
+          <div class="relative flex items-center">
+            <input 
+              type="text" 
+              id="quickRoomInput" 
+              value="default" 
+              placeholder="방 코드 입력"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();applyRoomCodeChange();}"
+              class="px-2.5 py-1.5 font-mono font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg text-xs w-28 focus:outline-none focus:border-sky-500 focus:bg-white transition"
+            >
+          </div>
           <button 
             type="button" 
+            id="btnApplyRoomCode"
             onclick="applyRoomCodeChange()" 
-            class="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs transition shadow-xs"
+            class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 active:scale-95 text-white font-bold text-xs transition shadow-xs cursor-pointer flex items-center gap-1"
           >
-            변경
+            <span>변경</span>
           </button>
           <button 
             type="button" 
+            id="btnCopyParticipantLink"
             onclick="copyParticipantLink()" 
-            class="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition flex items-center gap-1"
+            class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 active:scale-95 border border-slate-200 text-slate-700 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-xs"
             title="참가 링크 복사 (방 코드가 자동으로 채워진 링크)"
           >
-            <span>🔗</span> <span>링크 복사</span>
+            <span>📋</span>
+            <span>참가 링크 복사</span>
           </button>
+          <span id="currentActiveRoomBadge" class="ml-1 px-2 py-1 rounded-md bg-sky-50 text-sky-700 font-bold border border-sky-200 text-[11px] hidden sm:inline-block">
+            현재: default
+          </span>
         </div>
 
         <!-- 접속 상태 배지 -->
@@ -100,16 +111,22 @@
         </span>
 
         <!-- 설정 버튼 -->
-        <button onclick="openConfigModal()" class="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs flex items-center gap-1 transition shadow-sm">
+        <button onclick="openConfigModal()" class="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs flex items-center gap-1 transition shadow-sm cursor-pointer">
           ⚙️ 설정
         </button>
 
         <!-- 로그아웃 (PIN 잠금) 버튼 -->
-        <button onclick="handleHostLogout()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition">
+        <button onclick="handleHostLogout()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs transition cursor-pointer">
           🔒 잠금
         </button>
       </div>
     </header>
+
+    <!-- 상단 플로팅 토스트 알림 (링크 복사 및 방 변경 시 팝업) -->
+    <div id="hostToast" class="fixed top-5 right-5 z-50 max-w-sm p-4 rounded-2xl bg-slate-900/95 text-white text-xs shadow-2xl backdrop-blur-sm transition-all duration-300 transform -translate-y-4 opacity-0 pointer-events-none flex items-start gap-2.5 border border-slate-700">
+      <span id="hostToastIcon" class="text-base shrink-0">✅</span>
+      <div id="hostToastText" class="font-medium whitespace-pre-line leading-relaxed"></div>
+    </div>
 
     <!-- 상단 그리드: 게임 제어기 (좌) + 실시간 모니터링 현황 (우) -->
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
