@@ -106,6 +106,8 @@ function initHostDashboard() {
   updateHostConnectionBadge();
   setupHostRealtimeListeners();
   initCharts();
+  renderParticipantTags();
+  updateLiveVoteGauge();
 }
 
 // 토스트 안내 알림 표시 헬퍼
@@ -665,6 +667,7 @@ function setupHostRealtimeListeners() {
         }
       });
       renderParticipantTags();
+      updateLiveVoteGauge();
     }, (err) => console.warn("Firestore 참가자 리스너 경고:", err));
 
     // 투표 서브컬렉션 감지
@@ -695,6 +698,7 @@ function handleClientMessage(data) {
       joinedAt: data.timestamp || Date.now()
     });
     renderParticipantTags();
+    updateLiveVoteGauge();
     return;
   }
 
@@ -796,13 +800,17 @@ function renderParticipantTags() {
 
 // 실시간 투표 게이지 갱신
 function updateLiveVoteGauge() {
-  const total = hostState.connectedParticipants.size || 1;
+  const total = hostState.connectedParticipants.size;
   const voted = hostState.roundVotes.size;
-  const percent = Math.min(100, Math.round((voted / total) * 100));
+  const percent = total > 0 ? Math.min(100, Math.round((voted / total) * 100)) : 0;
 
-  document.getElementById("liveVotedCount").textContent = voted;
-  document.getElementById("liveTotalCount").textContent = total;
-  document.getElementById("liveProgressGauge").style.width = `${percent}%`;
+  const votedEl = document.getElementById("liveVotedCount");
+  const totalEl = document.getElementById("liveTotalCount");
+  const gaugeEl = document.getElementById("liveProgressGauge");
+
+  if (votedEl) votedEl.textContent = voted;
+  if (totalEl) totalEl.textContent = total;
+  if (gaugeEl) gaugeEl.style.width = `${percent}%`;
 }
 
 // 게임 시작
