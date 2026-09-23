@@ -336,9 +336,9 @@ async function copyParticipantLink() {
   }
 }
 
-// [요구사항 1, 4] 전체 게임 초기화 (투표 현황, 누적 통계, 1번 문제부터 다시 시작, 강퇴된 이름도 재입장 가능)
+// [요구사항 1, 4] 전체 게임 초기화 (질문 목록 제외: 실시간 참가자 명단, 투표 현황, 누적 통계 완전 리셋)
 async function handleResetEntireGame() {
-  if (!confirm("전체 게임을 초기화하시겠습니까?\n\n• 1번 문제부터 다시 시작합니다.\n• 모든 누적 통계 및 대중픽 랭킹이 리셋됩니다.\n• 강퇴되었던 참가자들도 다시 참여할 수 있습니다.")) {
+  if (!confirm("전체 게임을 초기화하시겠습니까?\n\n• 질문 목록을 제외한 모든 기록(실시간 참가자 명단, 투표 현황, 통계)이 완전히 초기화됩니다.\n• 1번 문제부터 다시 시작합니다.")) {
     return;
   }
 
@@ -347,12 +347,14 @@ async function handleResetEntireGame() {
     hostState.timerInterval = null;
   }
 
+  // 1. 상태 변수 완전 초기화 (실시간 참가자 목록 포함)
   hostState.status = "waiting";
+  hostState.connectedParticipants.clear();
   hostState.roundVotes.clear();
   hostState.historyRounds = [];
   selectQuestionByIndex(0);
 
-  // UI 리셋
+  // 2. UI 제어기 리셋
   document.getElementById("gameStatusBadge").className = "px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200";
   document.getElementById("gameStatusBadge").textContent = "대기 중 (Waiting)";
 
@@ -370,11 +372,21 @@ async function handleResetEntireGame() {
   const finalBox = document.getElementById("finalAnnounceBox");
   if (finalBox) finalBox.classList.add("hidden");
 
-  // 테이블 및 랭킹 초기화
+  // 3. 개별 선택 내역 테이블 & 필터 카운트 & 요약 카드 초기화
   const tbody = document.getElementById("participantResultTableBody");
   if (tbody) {
     tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400 text-xs">게임이 초기화되었습니다. 문제를 시작하면 참가자별 선택 내역이 여기에 출력됩니다.</td></tr>`;
   }
+  const fAll = document.getElementById("filterCountALL"); if (fAll) fAll.textContent = "0";
+  const fA = document.getElementById("filterCountA"); if (fA) fA.textContent = "0";
+  const fB = document.getElementById("filterCountB"); if (fB) fB.textContent = "0";
+  const fNone = document.getElementById("filterCountNONE"); if (fNone) fNone.textContent = "0";
+  const rCountA = document.getElementById("hostResultCountA"); if (rCountA) rCountA.textContent = "0표";
+  const rPercentA = document.getElementById("hostResultPercentA"); if (rPercentA) rPercentA.textContent = "0%";
+  const rCountB = document.getElementById("hostResultCountB"); if (rCountB) rCountB.textContent = "0표";
+  const rPercentB = document.getElementById("hostResultPercentB"); if (rPercentB) rPercentB.textContent = "0%";
+
+  // 4. 누적 통계 차트 및 랭킹 초기화
   const rankList = document.getElementById("majorityRankList");
   if (rankList) {
     rankList.innerHTML = `<p class="text-slate-400">여러 라운드를 진행하면 랭킹이 집계됩니다.</p>`;
@@ -390,10 +402,15 @@ async function handleResetEntireGame() {
     hostState.historyBarChart.update();
   }
 
-  // 1. Local Broadcast
+  // 5. 실시간 참가자 관리 탭 UI 리셋
+  renderParticipantTags();
+  updateLiveVoteGauge();
+
+  // 6. Local Broadcast 로 전체 클라이언트에 RESET_GAME 전송
   const resetMsg = {
     event: "RESET_GAME",
-    roomId: hostState.roomId
+    roomId: hostState.roomId,
+    timestamp: Date.now()
   };
   if (localBroadcast) {
     localBroadcast.postMessage({
@@ -402,7 +419,7 @@ async function handleResetEntireGame() {
     });
   }
 
-  // 2. Firebase Cloud Firestore 완전 초기화 (강퇴 해제 포함)
+  // 7. Firebase Cloud Firestore 완전 초기화 (참가자 컬렉션 및 투표 컬렉션 전체 삭제)
   if (db) {
     try {
       const roomRef = db.collection("rooms").doc(hostState.roomId);
@@ -416,12 +433,12 @@ async function handleResetEntireGame() {
         await batch1.commit();
       }
 
-      // (B) 참가자 컬렉션의 강퇴 플래그 전부 해제 (kicked: false)
+      // (B) 참가자 컬렉션 전체 삭제 (실시간 참가자 관리 탭 포함 완전 초기화)
       const partRef = roomRef.collection("participants");
       const partSnap = await partRef.get();
       if (!partSnap.empty) {
         const batch2 = db.batch();
-        partSnap.forEach((d) => batch2.set(d.ref, { kicked: false }, { merge: true }));
+        partSnap.forEach((d) => batch2.delete(d.ref));
         await batch2.commit();
       }
 
@@ -432,6 +449,7 @@ async function handleResetEntireGame() {
         totalRounds: hostState.totalQuestions,
         currentQuestion: hostState.selectedQuestion,
         resultSummary: null,
+        finalSummary: null,
         kickedUser: null,
         resetAt: Date.now()
       });
@@ -440,10 +458,11 @@ async function handleResetEntireGame() {
     }
   }
 
+  // 삭제 완료 후 UI 재확인
   renderParticipantTags();
   updateLiveVoteGauge();
 
-  alert("게임과 통계가 성공적으로 초기화되었습니다!\n강퇴되었던 참가자들도 이제 다시 입장할 수 있습니다.");
+  showToastNotification("♻️ 참가자 명단 및 모든 게임 기록이 초기화되었습니다.\n(질문 목록은 유지됩니다)");
 }
 
 // 프리셋 드롭다운 초기화

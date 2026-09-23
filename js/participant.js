@@ -24,7 +24,8 @@ const state = {
   roundIndex: 1,
   totalRounds: 10,
   history: [], // [요구사항 4] 10문항 복기 기록
-  hasParticipatedInCurrentRound: false // [요구사항 5] 현재 라운드 참여 여부 (접속하자마자 투표 미참여 모달 방지)
+  hasParticipatedInCurrentRound: false, // [요구사항 5] 현재 라운드 참여 여부 (접속하자마자 투표 미참여 모달 방지)
+  lastResetAt: 0
 };
 
 // Web Audio API 사운드 합성기
@@ -157,6 +158,7 @@ async function handleJoinGame(e) {
   state.hasParticipatedInCurrentRound = false;
   state.score = 0;
   state.history = [];
+  state.lastResetAt = Date.now();
   closeResultModal();
 
   localStorage.setItem("balance_user_nickname", nickInput);
@@ -261,6 +263,13 @@ function handleRoomStateFromFirestore(roomData) {
     const roomDisplay = document.getElementById("displayRoomName");
     if (roomDisplay) roomDisplay.textContent = roomData.newRoom;
     setupRealtimeListeners();
+    return;
+  }
+
+  // 호스트가 전체 게임 초기화를 실행한 경우
+  if (roomData.resetAt && roomData.resetAt > (state.lastResetAt || 0)) {
+    state.lastResetAt = roomData.resetAt;
+    onResetEntireGame();
     return;
   }
 
@@ -376,7 +385,7 @@ function handleKickedConfirm() {
   switchScreen("join");
 }
 
-// 전체 게임 초기화 (호스트 리셋 시 강퇴 해제 및 대기실 복귀)
+// 전체 게임 초기화 (호스트 리셋 시 강퇴 해제 및 입장 화면으로 완전 복귀)
 function onResetEntireGame() {
   state.isKicked = false;
   state.hasParticipatedInCurrentRound = false;
@@ -385,6 +394,8 @@ function onResetEntireGame() {
   state.myChoice = null;
   state.currentRoundKey = "";
   state.currentQuestion = null;
+  state.nickname = "";
+  localStorage.removeItem("balance_user_nickname");
 
   if (state.timerInterval) {
     clearInterval(state.timerInterval);
@@ -404,11 +415,14 @@ function onResetEntireGame() {
   if (roundBadge) roundBadge.classList.add("hidden");
 
   resetChoiceCards();
-  if (state.nickname) {
-    switchScreen("waiting");
-    setupRealtimeListeners();
-  } else {
-    switchScreen("join");
+
+  if (roomUnsubscribe) roomUnsubscribe();
+  if (participantUnsubscribe) participantUnsubscribe();
+
+  switchScreen("join");
+  const nickInput = document.getElementById("nicknameInput");
+  if (nickInput) {
+    nickInput.value = "";
   }
 }
 
